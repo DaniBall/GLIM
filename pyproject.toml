@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitlab-group-migrator"
+version = "0.1.0"
+description = "Herramienta para migrar grupos de repositorios y configuración CI/CD entre instancias de GitLab."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Version Control :: Git",
+  "Topic :: System :: Systems Administration",
+]
+
+[project.scripts]
+migrate-gitlab-group = "migrate_gitlab_group:main"
+
+[tool.setuptools]
+py-modules = ["migrate_gitlab_group"]

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gitlab-group-migrator"
+name = "glim"
 version = "0.1.0"
 description = "Herramienta para migrar grupos de repositorios y configuración CI/CD entre instancias de GitLab."
 readme = "README.md"
@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 [project.scripts]
-migrate-gitlab-group = "migrate_gitlab_group:main"
+migrate-gitlab-group = "glim:main"
 
 [tool.setuptools]
-py-modules = ["migrate_gitlab_group"]
+py-modules = ["glim"]

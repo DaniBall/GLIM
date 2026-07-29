@@ -31,16 +31,16 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-
-LOG = logging.getLogger("gitlab-migration")
+LOG = logging.getLogger("glim")
 SOURCE_TOKEN_ENV = "GITLAB_SOURCE_TOKEN"
 TARGET_TOKEN_ENV = "GITLAB_TARGET_TOKEN"
 
@@ -74,6 +74,7 @@ class ItemResult:
     Agrupa identidad, estado, detalles, avisos y errores. Así un fallo parcial
     queda asociado a su elemento sin impedir el procesamiento de los demás.
     """
+
     kind: str
     source: str
     target: str
@@ -90,6 +91,7 @@ class MigrationReport:
     Conserva el contexto de ambas instancias y agrega los resultados individuales
     para generar evidencia JSON incluso cuando algunas operaciones fallen.
     """
+
     mode: str
     source_url: str
     target_url: str
@@ -103,7 +105,7 @@ class MigrationReport:
 
     def as_dict(self) -> dict[str, Any]:
         """Convierte el informe en datos serializables y calcula su resumen.
-        
+
         Los contadores se derivan de los elementos para que no se desincronicen ante
         fallos parciales."""
         return {
@@ -156,7 +158,7 @@ def clean_base_url(value: str) -> str:
 
 def redact(text: str, secrets: Iterable[str]) -> str:
     """Sustituye secretos conocidos antes de mostrar o persistir texto externo.
-    
+
     Protege especialmente las salidas de HTTP y Git, que podrían repetir datos
     sensibles recibidos en credenciales o respuestas."""
     cleaned = text
@@ -183,7 +185,7 @@ class GitLabApi:
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         """Configura el cliente para una instancia y su política de reintentos.
-        
+
         ``role`` distingue origen y destino en mensajes sin revelar el token."""
         self.base_url = clean_base_url(base_url)
         self.api_url = f"{self.base_url}/api/v4"
@@ -204,7 +206,7 @@ class GitLabApi:
         allow_not_found: bool = False,
     ) -> Any:
         """Ejecuta una petición REST y devuelve JSON o bytes.
-        
+
         Normaliza consultas, serializa datos, reintenta fallos temporales con espera
         progresiva y eleva errores controlados con credenciales redactadas."""
         url = f"{self.api_url}{path}"
@@ -221,7 +223,7 @@ class GitLabApi:
         headers = {
             "PRIVATE-TOKEN": self.token,
             "Accept": "application/json",
-            "User-Agent": "gitlab-group-migrator/1.0",
+            "User-Agent": "glim/1.0",
         }
         if data is not None:
             body = json.dumps(data).encode("utf-8")
@@ -231,7 +233,9 @@ class GitLabApi:
         for attempt in range(self.retries + 1):
             request = Request(url, data=body, headers=headers, method=method)
             try:
-                with urlopen(request, timeout=self.timeout, context=self.ssl_context) as response:
+                with urlopen(
+                    request, timeout=self.timeout, context=self.ssl_context
+                ) as response:
                     payload = response.read()
                     if not expect_json:
                         return payload
@@ -243,7 +247,11 @@ class GitLabApi:
                     return None
                 if exc.code in {429, 502, 503, 504} and attempt < self.retries:
                     retry_after = exc.headers.get("Retry-After")
-                    delay = int(retry_after) if retry_after and retry_after.isdigit() else 2**attempt
+                    delay = (
+                        int(retry_after)
+                        if retry_after and retry_after.isdigit()
+                        else 2**attempt
+                    )
                     LOG.warning(
                         "API %s temporalmente no disponible (HTTP %s); reintento en %ss",
                         self.role,
@@ -270,7 +278,7 @@ class GitLabApi:
         query: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Recorre un endpoint paginado hasta reunir todos sus objetos.
-        
+
         Solicita lotes de 100 y rechaza respuestas que no sean listas para no ocultar un
         error o un cambio de contrato de la API."""
         page = 1
@@ -305,7 +313,7 @@ class GitLabApi:
 
 def build_parser() -> argparse.ArgumentParser:
     """Construye la interfaz CLI con valores predeterminados seguros.
-    
+
     La migración real, la actualización de refs y la sobrescritura de variables
     requieren opciones explícitas por su impacto."""
     parser = argparse.ArgumentParser(
@@ -317,8 +325,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-url", required=True, help="URL del GitLab origen")
     parser.add_argument("--target-url", required=True, help="URL del GitLab destino")
-    parser.add_argument("--source-group", required=True, help="Ruta completa del grupo origen")
-    parser.add_argument("--target-group", required=True, help="Ruta completa del grupo destino")
+    parser.add_argument(
+        "--source-group", required=True, help="Ruta completa del grupo origen"
+    )
+    parser.add_argument(
+        "--target-group", required=True, help="Ruta completa del grupo destino"
+    )
     parser.add_argument(
         "--execute",
         action="store_true",
@@ -366,8 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Ruta del informe JSON; si se omite se crea con fecha y hora",
     )
-    parser.add_argument("--timeout", type=int, default=60, help="Timeout HTTP en segundos")
-    parser.add_argument("--retries", type=int, default=3, help="Reintentos para errores temporales")
+    parser.add_argument(
+        "--timeout", type=int, default=60, help="Timeout HTTP en segundos"
+    )
+    parser.add_argument(
+        "--retries", type=int, default=3, help="Reintentos para errores temporales"
+    )
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -376,7 +392,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("migration-checkpoint.json"),
+        default=Path("glim-checkpoint.json"),
         help="Estado durable por proyecto y fase para reanudar con seguridad",
     )
     parser.add_argument(
@@ -425,9 +441,12 @@ class Migrator:
     Mantiene el mapeo de namespaces, coordina API y Git, y procesa cada proyecto
     de forma aislada para continuar tras fallos dejando trazabilidad en el informe.
     """
-    def __init__(self, args: argparse.Namespace, source_token: str, target_token: str) -> None:
+
+    def __init__(
+        self, args: argparse.Namespace, source_token: str, target_token: str
+    ) -> None:
         """Prepara clientes, mapeos e informe sin modificar GitLab.
-        
+
         Guarda ambos tokens en la lista de secretos usada para redactar cualquier salida."""
         self.args = args
         self.execute = args.execute
@@ -439,9 +458,13 @@ class Migrator:
         self.source_ssl_context = ssl.create_default_context()
         self.target_ssl_context = ssl.create_default_context()
         if self.source_ca_bundle:
-            self.source_ssl_context.load_verify_locations(cafile=str(self.source_ca_bundle.resolve()))
+            self.source_ssl_context.load_verify_locations(
+                cafile=str(self.source_ca_bundle.resolve())
+            )
         if self.target_ca_bundle:
-            self.target_ssl_context.load_verify_locations(cafile=str(self.target_ca_bundle.resolve()))
+            self.target_ssl_context.load_verify_locations(
+                cafile=str(self.target_ca_bundle.resolve())
+            )
         self.source = GitLabApi(
             args.source_url,
             source_token,
@@ -471,8 +494,12 @@ class Migrator:
         self.git_lfs_available = False
         self.checkpoint_path = args.checkpoint
         self.checkpoint: dict[str, Any] = {"version": 2, "projects": {}}
-        self.pending_ci_validation: list[tuple[dict[str, Any], dict[str, Any], ItemResult]] = []
-        self.pending_job_token_scope: list[tuple[dict[str, Any], dict[str, Any], ItemResult]] = []
+        self.pending_ci_validation: list[
+            tuple[dict[str, Any], dict[str, Any], ItemResult]
+        ] = []
+        self.pending_job_token_scope: list[
+            tuple[dict[str, Any], dict[str, Any], ItemResult]
+        ] = []
         self.pending_archives: list[tuple[dict[str, Any], ItemResult]] = []
         self.source_projects: list[dict[str, Any]] = []
 
@@ -491,7 +518,12 @@ class Migrator:
 
         LOG.info("Se procesarán %d proyectos", len(self.source_projects))
         for index, project in enumerate(self.source_projects, start=1):
-            LOG.info("[%d/%d] %s", index, len(self.source_projects), project["path_with_namespace"])
+            LOG.info(
+                "[%d/%d] %s",
+                index,
+                len(self.source_projects),
+                project["path_with_namespace"],
+            )
             self.migrate_project(project)
 
         # Las allowlists solo se pueden mapear cuando todos los destinos existen.
@@ -500,7 +532,9 @@ class Migrator:
                 before = len(result.errors)
                 self.copy_job_token_scope(source_project, target_project, result)
                 if len(result.errors) == before:
-                    self.checkpoint_phase(result.source, "job_token_scope", target_project)
+                    self.checkpoint_phase(
+                        result.source, "job_token_scope", target_project
+                    )
 
         # Revalida refs al final para detectar cambios en origen durante una reanudación.
         # Los includes entre proyectos solo pueden resolverse con todo el grupo cargado.
@@ -510,21 +544,33 @@ class Migrator:
                 result.details.append("Referencias Git verificadas de nuevo al cierre")
             except Exception as exc:
                 self.clear_checkpoint_phases(result.source, {"repository", "complete"})
-                self.mark_partial(result, "Verificación Git final fallida: " + redact(str(exc), self.secrets))
+                self.mark_partial(
+                    result,
+                    "Verificación Git final fallida: " + redact(str(exc), self.secrets),
+                )
             try:
                 self.validate_ci(target_project, result)
             except Exception as exc:
-                self.mark_partial(result, "Validación CI final fallida: " + redact(str(exc), self.secrets))
+                self.mark_partial(
+                    result,
+                    "Validación CI final fallida: " + redact(str(exc), self.secrets),
+                )
         # Archivar es la última mutación: job-token scope y validaciones necesitan
         # que el proyecto siga editable durante toda la migración.
         for target_project, result in self.pending_archives:
             if not self.phase_completed(result.source, "archived"):
                 try:
-                    self.target.request("POST", f"/projects/{target_project['id']}/archive")
+                    self.target.request(
+                        "POST", f"/projects/{target_project['id']}/archive"
+                    )
                     self.checkpoint_phase(result.source, "archived", target_project)
                     result.details.append("Proyecto archivado como en origen")
                 except Exception as exc:
-                    self.mark_partial(result, "No se pudo archivar el proyecto: " + redact(str(exc), self.secrets))
+                    self.mark_partial(
+                        result,
+                        "No se pudo archivar el proyecto: "
+                        + redact(str(exc), self.secrets),
+                    )
 
         self.report.finished_at = utc_now()
         return self.report
@@ -551,7 +597,9 @@ class Migrator:
         if not self.args.resume:
             return
         if not self.checkpoint_path.exists():
-            raise MigrationError(f"No existe el checkpoint para --resume: {self.checkpoint_path}")
+            raise MigrationError(
+                f"No existe el checkpoint para --resume: {self.checkpoint_path}"
+            )
         try:
             loaded = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -570,8 +618,12 @@ class Migrator:
         self.checkpoint["identity"] = self.checkpoint_identity()
         self.checkpoint["updated_at"] = utc_now()
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.checkpoint_path.with_suffix(self.checkpoint_path.suffix + ".tmp")
-        temporary.write_text(json.dumps(self.checkpoint, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary = self.checkpoint_path.with_suffix(
+            self.checkpoint_path.suffix + ".tmp"
+        )
+        temporary.write_text(
+            json.dumps(self.checkpoint, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         os.replace(temporary, self.checkpoint_path)
 
     def checkpoint_phase(
@@ -585,11 +637,13 @@ class Migrator:
     ) -> None:
         """Marca una fase completada y la identidad exacta de su proyecto destino."""
         entry = self.checkpoint.setdefault("projects", {}).setdefault(source_path, {})
-        entry.update({
-            "target_id": target_project["id"],
-            "target_path": target_project["path_with_namespace"],
-            "phase": phase,
-        })
+        entry.update(
+            {
+                "target_id": target_project["id"],
+                "target_path": target_project["path_with_namespace"],
+                "phase": phase,
+            }
+        )
         completed = entry.setdefault("completed_phases", [])
         if phase not in completed:
             completed.append(phase)
@@ -606,9 +660,19 @@ class Migrator:
         if isinstance(completed, list):
             return phase in completed
         phases = [
-            "created", "repository", "variables", "settings", "deploy_keys",
-            "protections", "schedules", "restored", "protected_environments",
-            "wiki", "job_token_scope", "complete", "archived",
+            "created",
+            "repository",
+            "variables",
+            "settings",
+            "deploy_keys",
+            "protections",
+            "schedules",
+            "restored",
+            "protected_environments",
+            "wiki",
+            "job_token_scope",
+            "complete",
+            "archived",
         ]
         current = entry.get("phase")
         return current in phases and phases.index(current) >= phases.index(phase)
@@ -622,7 +686,9 @@ class Migrator:
             return
         completed = entry.get("completed_phases")
         if isinstance(completed, list):
-            entry["completed_phases"] = [item for item in completed if item not in phases]
+            entry["completed_phases"] = [
+                item for item in completed if item not in phases
+            ]
         if entry.get("phase") in phases:
             entry["phase"] = "invalidated"
         self.save_checkpoint()
@@ -636,10 +702,14 @@ class Migrator:
             if parsed.scheme not in {"https", "http"} or not parsed.netloc:
                 raise MigrationError(f"URL {role} no válida: {value}")
             if parsed.scheme != "https" and not self.args.allow_http:
-                raise MigrationError(f"La URL {role} usa HTTP; añada --allow-http solo si es intencionado")
+                raise MigrationError(
+                    f"La URL {role} usa HTTP; añada --allow-http solo si es intencionado"
+                )
         if source_url.lower() == target_url.lower():
             raise MigrationError("Las URLs de origen y destino deben ser diferentes")
-        if self.args.ca_bundle and (self.args.source_ca_bundle or self.args.target_ca_bundle):
+        if self.args.ca_bundle and (
+            self.args.source_ca_bundle or self.args.target_ca_bundle
+        ):
             raise MigrationError(
                 "--ca-bundle no se combina con --source-ca-bundle/--target-ca-bundle; elija un modo"
             )
@@ -654,8 +724,14 @@ class Migrator:
             raise MigrationError(
                 f"Ya existe el checkpoint {self.checkpoint_path}; use --resume o elija otra ruta"
             )
-        if self.args.timeout <= 0 or self.args.git_timeout <= 0 or self.args.min_free_space_mb < 0:
-            raise MigrationError("Los timeouts deben ser positivos y el espacio mínimo no negativo")
+        if (
+            self.args.timeout <= 0
+            or self.args.git_timeout <= 0
+            or self.args.min_free_space_mb < 0
+        ):
+            raise MigrationError(
+                "Los timeouts deben ser positivos y el espacio mínimo no negativo"
+            )
         free_mb = shutil.disk_usage(tempfile.gettempdir()).free // (1024 * 1024)
         if free_mb < self.args.min_free_space_mb:
             raise MigrationError(
@@ -664,21 +740,31 @@ class Migrator:
         self.load_checkpoint()
         self.source_root = self.source.get_group(self.args.source_group) or {}
         if not self.source_root:
-            raise MigrationError(f"No existe o no es visible el grupo origen: {self.args.source_group}")
+            raise MigrationError(
+                f"No existe o no es visible el grupo origen: {self.args.source_group}"
+            )
         self.target_root = self.target.get_group(self.args.target_group) or {}
         if not self.target_root:
-            raise MigrationError(f"El grupo raíz destino debe existir previamente: {self.args.target_group}")
+            raise MigrationError(
+                f"El grupo raíz destino debe existir previamente: {self.args.target_group}"
+            )
         self.group_map[self.source_root["full_path"]] = self.target_root
         self._check_tool(["git", "--version"], "Git")
         self.git_lfs_available = self._tool_available(["git", "lfs", "version"])
         if self.args.with_lfs and not self.git_lfs_available:
             message = "Se solicitó LFS pero git-lfs no está instalado"
             if self.execute:
-                raise MigrationError(message + "; use --no-with-lfs solo si acepta no migrar sus objetos")
+                raise MigrationError(
+                    message + "; use --no-with-lfs solo si acepta no migrar sus objetos"
+                )
             self.report.warnings.append(message + "; la simulación continúa")
         source_version = self.source.request("GET", "/version")
         target_version = self.target.request("GET", "/version")
-        LOG.info("GitLab origen %s; destino %s", source_version.get("version", "desconocido"), target_version.get("version", "desconocido"))
+        LOG.info(
+            "GitLab origen %s; destino %s",
+            source_version.get("version", "desconocido"),
+            target_version.get("version", "desconocido"),
+        )
 
     def validate_migration_scope(
         self,
@@ -687,7 +773,8 @@ class Migrator:
     ) -> None:
         """Valida rutas, detalles y formatos sin mutar el destino."""
         if self.source_root["full_path"] == self.target_root["full_path"] and (
-            urlsplit(self.args.source_url).netloc.lower() == urlsplit(self.args.target_url).netloc.lower()
+            urlsplit(self.args.source_url).netloc.lower()
+            == urlsplit(self.args.target_url).netloc.lower()
         ):
             raise MigrationError("Origen y destino resuelven al mismo namespace")
         group_paths = {group["full_path"] for group in groups}
@@ -696,57 +783,96 @@ class Migrator:
         for project in projects:
             namespace = project.get("namespace", {}).get("full_path")
             if namespace not in group_paths:
-                raise MigrationError(f"Proyecto fuera del ámbito resuelto: {project.get('path_with_namespace')}")
+                raise MigrationError(
+                    f"Proyecto fuera del ámbito resuelto: {project.get('path_with_namespace')}"
+                )
             target_path = f"{self.target_group_path(namespace)}/{project['path']}"
-            if target_path == project["path_with_namespace"] and urlsplit(self.args.source_url).netloc.lower() == urlsplit(self.args.target_url).netloc.lower():
+            if (
+                target_path == project["path_with_namespace"]
+                and urlsplit(self.args.source_url).netloc.lower()
+                == urlsplit(self.args.target_url).netloc.lower()
+            ):
                 raise MigrationError(f"Autodestino detectado: {target_path}")
             object_format = project.get("repository_object_format", "sha1")
             if object_format not in {"sha1", "sha256"}:
-                raise MigrationError(f"Formato Git no soportado en {project['path_with_namespace']}: {object_format}")
+                raise MigrationError(
+                    f"Formato Git no soportado en {project['path_with_namespace']}: {object_format}"
+                )
             existing_target = self.target.get_project(target_path)
-            entry = self.checkpoint.get("projects", {}).get(project["path_with_namespace"], {})
+            entry = self.checkpoint.get("projects", {}).get(
+                project["path_with_namespace"], {}
+            )
             if self.args.resume and entry:
                 if not existing_target:
                     raise MigrationError(
                         f"El destino registrado en checkpoint fue eliminado: {target_path}"
                     )
-                if (
-                    entry.get("target_id") != existing_target.get("id")
-                    or entry.get("target_path") != existing_target.get("path_with_namespace")
-                ):
-                    raise MigrationError(f"Cambió la identidad del destino registrado: {target_path}")
+                if entry.get("target_id") != existing_target.get("id") or entry.get(
+                    "target_path"
+                ) != existing_target.get("path_with_namespace"):
+                    raise MigrationError(
+                        f"Cambió la identidad del destino registrado: {target_path}"
+                    )
                 allowed_resume = bool(entry.get("created_by_migrator")) or bool(
                     entry.get("migration_mode") == "existing_update"
                     and self.args.existing == "update"
                 )
                 if not allowed_resume:
-                    raise MigrationError(f"Checkpoint no reanudable para el destino: {target_path}")
-            elif self.args.resume and existing_target and self.args.existing == "update":
+                    raise MigrationError(
+                        f"Checkpoint no reanudable para el destino: {target_path}"
+                    )
+            elif (
+                self.args.resume and existing_target and self.args.existing == "update"
+            ):
                 raise MigrationError(
                     f"--resume no adopta un destino sin entrada exacta de checkpoint: {target_path}"
                 )
             if existing_target:
                 target_format = existing_target.get("repository_object_format", "sha1")
                 if target_format != object_format:
-                    raise MigrationError(f"Formato Git incompatible en destino {target_path}: {object_format} -> {target_format}")
-                if existing_target.get("id") == project.get("id") and urlsplit(self.args.source_url).netloc.lower() == urlsplit(self.args.target_url).netloc.lower():
-                    raise MigrationError(f"Proyecto origen y destino tienen la misma identidad: {target_path}")
+                    raise MigrationError(
+                        f"Formato Git incompatible en destino {target_path}: {object_format} -> {target_format}"
+                    )
+                if (
+                    existing_target.get("id") == project.get("id")
+                    and urlsplit(self.args.source_url).netloc.lower()
+                    == urlsplit(self.args.target_url).netloc.lower()
+                ):
+                    raise MigrationError(
+                        f"Proyecto origen y destino tienen la misma identidad: {target_path}"
+                    )
             if project.get("lfs_enabled") and not self.args.with_lfs:
-                self.report.warnings.append(f"{project['path_with_namespace']}: LFS está habilitado pero se ha desactivado su migración")
+                self.report.warnings.append(
+                    f"{project['path_with_namespace']}: LFS está habilitado pero se ha desactivado su migración"
+                )
             # Estos GET anticipan permisos insuficientes antes de la primera escritura.
-            for endpoint in ("variables", "protected_branches", "protected_tags", "pipeline_schedules"):
+            for endpoint in (
+                "variables",
+                "protected_branches",
+                "protected_tags",
+                "pipeline_schedules",
+            ):
                 values = self.source.paginate(f"/projects/{project['id']}/{endpoint}")
                 if endpoint == "pipeline_schedules":
                     for schedule in values:
-                        self.source.request("GET", f"/projects/{project['id']}/pipeline_schedules/{schedule['id']}")
+                        self.source.request(
+                            "GET",
+                            f"/projects/{project['id']}/pipeline_schedules/{schedule['id']}",
+                        )
             # Funciones dependientes de tier/versión se inventarían sin abortar el
             # grupo completo; durante la ejecución se convertirán en partial.
             try:
                 self.source.paginate(f"/projects/{project['id']}/deploy_keys")
-                self.source.paginate(f"/projects/{project['id']}/protected_environments")
+                self.source.paginate(
+                    f"/projects/{project['id']}/protected_environments"
+                )
                 self.source.request("GET", f"/projects/{project['id']}/job_token_scope")
-                self.source.paginate(f"/projects/{project['id']}/job_token_scope/allowlist")
-                self.source.paginate(f"/projects/{project['id']}/job_token_scope/groups_allowlist")
+                self.source.paginate(
+                    f"/projects/{project['id']}/job_token_scope/allowlist"
+                )
+                self.source.paginate(
+                    f"/projects/{project['id']}/job_token_scope/groups_allowlist"
+                )
             except MigrationError as exc:
                 self.report.warnings.append(
                     f"{project['path_with_namespace']}: preflight CI/CD avanzado incompleto: "
@@ -767,11 +893,16 @@ class Migrator:
                     parent["full_path"],
                     self.target_root["full_path"],
                     "partial",
-                    details=[f"{len(variables)} variables heredables inventariadas; no se copian fuera del ámbito"],
-                    warnings=["Revise colisiones y replíquelas en un ancestro equivalente del destino"],
+                    details=[
+                        f"{len(variables)} variables heredables inventariadas; no se copian fuera del ámbito"
+                    ],
+                    warnings=[
+                        "Revise colisiones y replíquelas en un ancestro equivalente del destino"
+                    ],
                 )
                 self.report.items.append(item)
             parent_id = parent.get("parent_id")
+
     def _check_tool(self, command: list[str], name: str) -> None:
         """Exige que una herramienta externa esté disponible o aborta."""
         if not self._tool_available(command):
@@ -794,7 +925,7 @@ class Migrator:
 
     def discover_groups(self) -> list[dict[str, Any]]:
         """Descubre la raíz y, opcionalmente, todos sus subgrupos.
-        
+
         Ordena por profundidad para resolver cada padre antes que sus descendientes."""
         groups = [self.source_root]
         if self.args.include_subgroups:
@@ -808,7 +939,7 @@ class Migrator:
 
     def discover_projects(self) -> list[dict[str, Any]]:
         """Enumera los proyectos del ámbito solicitado.
-        
+
         Excluye compartidos y normalmente archivados; el filtro de namespace impide
         aceptar resultados externos por diferencias entre versiones de GitLab."""
         projects = self.source.paginate(
@@ -840,7 +971,7 @@ class Migrator:
 
     def ensure_target_groups(self, source_groups: list[dict[str, Any]]) -> None:
         """Resuelve o crea en destino cada subgrupo descubierto.
-        
+
         En simulación usa grupos sintéticos en memoria; en ejecución avanza de padres a
         hijos y replica los atributos básicos compatibles."""
         for source_group in source_groups:
@@ -852,14 +983,18 @@ class Migrator:
             if existing:
                 self.group_map[source_path] = existing
                 self.report.items.append(
-                    ItemResult("group", source_path, target_path, "skipped", ["Ya existe"])
+                    ItemResult(
+                        "group", source_path, target_path, "skipped", ["Ya existe"]
+                    )
                 )
                 continue
 
             parent_source_path = source_path.rsplit("/", 1)[0]
             parent_target = self.group_map.get(parent_source_path)
             if not parent_target:
-                raise MigrationError(f"No se pudo resolver el grupo padre de {source_path}")
+                raise MigrationError(
+                    f"No se pudo resolver el grupo padre de {source_path}"
+                )
 
             if not self.execute:
                 synthetic = {
@@ -869,7 +1004,9 @@ class Migrator:
                 }
                 self.group_map[source_path] = synthetic
                 self.report.items.append(
-                    ItemResult("group", source_path, target_path, "planned", ["Se crearía"])
+                    ItemResult(
+                        "group", source_path, target_path, "planned", ["Se crearía"]
+                    )
                 )
                 continue
 
@@ -891,13 +1028,11 @@ class Migrator:
 
     def copy_group_variables(self, source_groups: list[dict[str, Any]]) -> None:
         """Planifica o copia variables CI/CD para cada grupo y subgrupo.
-        
+
         Registra un resultado auditable por namespace y delega duplicados y redacción."""
         for source_group in source_groups:
             target_group = self.group_map[source_group["full_path"]]
-            variables = self.source.paginate(
-                f"/groups/{source_group['id']}/variables"
-            )
+            variables = self.source.paginate(f"/groups/{source_group['id']}/variables")
             if not variables:
                 continue
             result = ItemResult(
@@ -928,12 +1063,13 @@ class Migrator:
         result: ItemResult,
     ) -> tuple[int, int, int]:
         """Copia variables CI/CD respetando ámbito, atributos y duplicados.
-        
+
         Identifica por clave y ``environment_scope``; solo sobrescribe con autorización
         y aísla cada error redactando tokens y valor. Devuelve sus tres contadores."""
         existing = self.target.paginate(target_endpoint)
         existing_map = {
-            (item.get("key"), item.get("environment_scope", "*")): item for item in existing
+            (item.get("key"), item.get("environment_scope", "*")): item
+            for item in existing
         }
         existing_keys = set(existing_map)
         copied = skipped = failed = 0
@@ -941,12 +1077,20 @@ class Migrator:
             key = variable["key"]
             environment_scope = variable.get("environment_scope", "*")
             identity = (key, environment_scope)
-            desired_hidden = bool(variable.get("hidden") or variable.get("masked_and_hidden"))
+            desired_hidden = bool(
+                variable.get("hidden") or variable.get("masked_and_hidden")
+            )
             payload = {
                 field: variable[field]
                 for field in (
-                    "key", "value", "variable_type", "protected", "masked",
-                    "raw", "environment_scope", "description",
+                    "key",
+                    "value",
+                    "variable_type",
+                    "protected",
+                    "masked",
+                    "raw",
+                    "environment_scope",
+                    "description",
                 )
                 if field in variable and variable[field] is not None
             }
@@ -962,14 +1106,27 @@ class Migrator:
                         continue
                     if not self.args.overwrite_ci_variables:
                         skipped += 1
-                        comparable = ("value", "variable_type", "protected", "masked", "raw", "description")
-                        if any(current.get(field) != payload.get(field) for field in comparable if field in payload):
+                        comparable = (
+                            "value",
+                            "variable_type",
+                            "protected",
+                            "masked",
+                            "raw",
+                            "description",
+                        )
+                        if any(
+                            current.get(field) != payload.get(field)
+                            for field in comparable
+                            if field in payload
+                        ):
                             self.mark_partial(
                                 result,
                                 f"Variable existente distinta y no sobrescrita: {key} [{environment_scope}]",
                             )
                         else:
-                            result.details.append(f"Variable existente equivalente: {key} [{environment_scope}]")
+                            result.details.append(
+                                f"Variable existente equivalente: {key} [{environment_scope}]"
+                            )
                         continue
                     filter_query = {"filter[environment_scope]": environment_scope}
                     self.target.request(
@@ -993,7 +1150,9 @@ class Migrator:
                 )
         return copied, skipped, failed
 
-    def mark_partial(self, result: ItemResult, message: str, *, error: bool = True) -> None:
+    def mark_partial(
+        self, result: ItemResult, message: str, *, error: bool = True
+    ) -> None:
         """Marca un componente obligatorio incompleto sin ocultar que Git sí pudo migrarse."""
         if result.status != "failed":
             result.status = "partial"
@@ -1004,21 +1163,28 @@ class Migrator:
         source_path = source_project["path_with_namespace"]
         source_namespace = source_project["namespace"]["full_path"]
         target_group = self.group_map.get(source_namespace)
-        target_path = f"{target_group['full_path']}/{source_project['path']}" if target_group else self.target_group_path(source_namespace) + f"/{source_project['path']}"
+        target_path = (
+            f"{target_group['full_path']}/{source_project['path']}"
+            if target_group
+            else self.target_group_path(source_namespace) + f"/{source_project['path']}"
+        )
         result = ItemResult("project", source_path, target_path, "planned")
         self.report.items.append(result)
         target_project: dict[str, Any] | None = None
         restore_source: dict[str, Any] | None = None
         try:
             if not target_group:
-                raise MigrationError(f"No existe el mapeo del namespace {source_namespace}")
+                raise MigrationError(
+                    f"No existe el mapeo del namespace {source_namespace}"
+                )
             target_project = self.target.get_project(target_path)
             entry = self.checkpoint.get("projects", {}).get(source_path, {})
             resumable = bool(
                 self.args.resume
                 and target_project
                 and entry.get("target_id") == target_project.get("id")
-                and entry.get("target_path") == target_project.get("path_with_namespace")
+                and entry.get("target_path")
+                == target_project.get("path_with_namespace")
                 and (
                     entry.get("created_by_migrator")
                     or (
@@ -1030,33 +1196,53 @@ class Migrator:
             if target_project and self.args.resume and not resumable:
                 if self.args.existing == "skip" and not entry:
                     result.status = "skipped"
-                    result.details.append("Proyecto preexistente omitido; no se adopta en checkpoint")
+                    result.details.append(
+                        "Proyecto preexistente omitido; no se adopta en checkpoint"
+                    )
                     return
-                raise MigrationError("El proyecto destino no está identificado por este checkpoint; no se adopta")
+                raise MigrationError(
+                    "El proyecto destino no está identificado por este checkpoint; no se adopta"
+                )
             if target_project and not resumable and self.args.existing == "skip":
                 result.status = "skipped"
                 result.details.append("El proyecto ya existe en destino")
                 return
             if not self.execute:
-                result.details.extend(self.describe_project_plan(source_project, bool(target_project)))
+                result.details.extend(
+                    self.describe_project_plan(source_project, bool(target_project))
+                )
                 return
             if not target_project:
-                target_project = self.create_target_project(source_project, target_group)
+                target_project = self.create_target_project(
+                    source_project, target_group
+                )
                 restore_source = source_project
                 self.checkpoint_phase(
-                    source_path, "created", target_project,
-                    created_by_migrator=True, migration_mode="created",
+                    source_path,
+                    "created",
+                    target_project,
+                    created_by_migrator=True,
+                    migration_mode="created",
                 )
                 result.details.append("Proyecto creado e identificado en checkpoint")
             else:
                 restore_source = source_project
                 if not resumable:
-                    result.warnings.append("Se actualiza un proyecto existente; push --mirror puede eliminar refs exclusivas")
-                    self.checkpoint_phase(
-                        source_path, "created", target_project,
-                        created_by_migrator=False, migration_mode="existing_update",
+                    result.warnings.append(
+                        "Se actualiza un proyecto existente; push --mirror puede eliminar refs exclusivas"
                     )
-            self.target.request("PUT", f"/projects/{target_project['id']}", data={"builds_access_level": "disabled"})
+                    self.checkpoint_phase(
+                        source_path,
+                        "created",
+                        target_project,
+                        created_by_migrator=False,
+                        migration_mode="existing_update",
+                    )
+            self.target.request(
+                "PUT",
+                f"/projects/{target_project['id']}",
+                data={"builds_access_level": "disabled"},
+            )
             if not self.phase_completed(source_path, "repository"):
                 before = len(result.errors)
                 self.copy_repository(source_project, target_project, result)
@@ -1087,7 +1273,11 @@ class Migrator:
                 self.copy_pipeline_schedules(source_project, target_project, result)
                 if len(result.errors) == before:
                     self.checkpoint_phase(source_path, "schedules", target_project)
-            if self.args.with_wikis and source_project.get("wiki_enabled", True) and not self.phase_completed(source_path, "wiki"):
+            if (
+                self.args.with_wikis
+                and source_project.get("wiki_enabled", True)
+                and not self.phase_completed(source_path, "wiki")
+            ):
                 self.copy_wiki(source_project, target_project, result)
                 self.checkpoint_phase(source_path, "wiki", target_project)
             if result.status == "planned":
@@ -1104,23 +1294,40 @@ class Migrator:
                     self.checkpoint_phase(source_path, "restored", target_project)
                     if not self.phase_completed(source_path, "protected_environments"):
                         before = len(result.errors)
-                        self.copy_protected_environments(restore_source, target_project, result)
+                        self.copy_protected_environments(
+                            restore_source, target_project, result
+                        )
                         if len(result.errors) == before:
-                            self.checkpoint_phase(source_path, "protected_environments", target_project)
+                            self.checkpoint_phase(
+                                source_path, "protected_environments", target_project
+                            )
                 except Exception as restore_exc:
-                    self.mark_partial(result, "No se pudo restaurar o completar la protección CI/CD: " + redact(str(restore_exc), self.secrets))
+                    self.mark_partial(
+                        result,
+                        "No se pudo restaurar o completar la protección CI/CD: "
+                        + redact(str(restore_exc), self.secrets),
+                    )
             if self.execute and target_project and result.status in {"ok", "partial"}:
-                self.pending_job_token_scope.append((source_project, target_project, result))
-                self.pending_ci_validation.append((source_project, target_project, result))
+                self.pending_job_token_scope.append(
+                    (source_project, target_project, result)
+                )
+                self.pending_ci_validation.append(
+                    (source_project, target_project, result)
+                )
                 if source_project.get("archived"):
                     self.pending_archives.append((target_project, result))
+
     def describe_project_plan(
         self,
         source_project: dict[str, Any],
         target_exists: bool,
     ) -> list[str]:
         """Enumera las acciones previstas para un proyecto en simulación."""
-        action = "Actualizaría el proyecto existente" if target_exists else "Crearía el proyecto"
+        action = (
+            "Actualizaría el proyecto existente"
+            if target_exists
+            else "Crearía el proyecto"
+        )
         details = [
             action,
             "Migraría todas las referencias Git",
@@ -1142,7 +1349,7 @@ class Migrator:
         target_group: dict[str, Any],
     ) -> dict[str, Any]:
         """Crea un proyecto vacío con CI/CD desactivado.
-        
+
         No genera README para evitar referencias divergentes antes del primer mirror."""
         return self.target.request(
             "POST",
@@ -1156,7 +1363,9 @@ class Migrator:
                 "initialize_with_readme": False,
                 "builds_access_level": "disabled",
                 "lfs_enabled": source_project.get("lfs_enabled", True),
-                "repository_object_format": source_project.get("repository_object_format", "sha1"),
+                "repository_object_format": source_project.get(
+                    "repository_object_format", "sha1"
+                ),
             },
         )
 
@@ -1169,7 +1378,7 @@ class Migrator:
         ca_bundle = self.source_ca_bundle if role == "source" else self.target_ca_bundle
         parsed = urlsplit(clean_base_url(base_url))
         scope = urlunsplit((parsed.scheme, parsed.netloc, "/", "", ""))
-        credentials = base64.b64encode(f"oauth2:{token}".encode("utf-8")).decode("ascii")
+        credentials = base64.b64encode(f"oauth2:{token}".encode()).decode("ascii")
         entries = [(f"http.{scope}.extraHeader", f"Authorization: Basic {credentials}")]
         if ca_bundle:
             entries.append((f"http.{scope}.sslCAInfo", str(ca_bundle.resolve())))
@@ -1179,6 +1388,7 @@ class Migrator:
             env[f"GIT_CONFIG_KEY_{index}"] = key
             env[f"GIT_CONFIG_VALUE_{index}"] = value
         return env
+
     def run_git(
         self,
         command: list[str],
@@ -1189,7 +1399,7 @@ class Migrator:
         allow_failure: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Ejecuta Git capturando y redactando su salida.
-        
+
         Convierte fallos obligatorios en ``MigrationError``; ``allow_failure`` permite
         tratar LFS o wiki como operaciones opcionales."""
         display = " ".join(command)
@@ -1225,16 +1435,18 @@ class Migrator:
         result: ItemResult,
     ) -> str | None:
         """Copia todas las referencias Git y, si procede, objetos LFS.
-        
+
         ``clone --mirror`` y ``push --mirror`` conservan ramas, etiquetas, commits y
         merges. LFS se procesa aparte porque sus objetos no pertenecen al grafo Git."""
         if source_project.get("empty_repo"):
-            result.details.append("Repositorio vacío; no hay referencias Git que copiar")
+            result.details.append(
+                "Repositorio vacío; no hay referencias Git que copiar"
+            )
             return None
 
         source_url = source_project["http_url_to_repo"]
         target_url = target_project["http_url_to_repo"]
-        with tempfile.TemporaryDirectory(prefix="gitlab-migration-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="glim-") as temp_dir:
             repo_dir = Path(temp_dir) / "repository.git"
             self.run_git(
                 ["git", "clone", "--mirror", source_url, str(repo_dir)],
@@ -1267,16 +1479,18 @@ class Migrator:
                         allow_failure=True,
                     )
                     if push.returncode:
-                        self.mark_partial(result,
+                        self.mark_partial(
+                            result,
                             "Git LFS no se pudo enviar: "
-                            + redact(push.stderr.strip()[-1000:], self.secrets)
+                            + redact(push.stderr.strip()[-1000:], self.secrets),
                         )
                     else:
                         result.details.append("Objetos Git LFS procesados")
                 else:
-                    self.mark_partial(result,
+                    self.mark_partial(
+                        result,
                         "Git LFS no se pudo descargar: "
-                        + redact(fetch.stderr.strip()[-1000:], self.secrets)
+                        + redact(fetch.stderr.strip()[-1000:], self.secrets),
                     )
 
             # El mirror puede borrar refs exclusivas del destino; actualizar un
@@ -1298,6 +1512,7 @@ class Migrator:
         result: ItemResult,
     ) -> None:
         """Compara todas las refs visibles, formato de objetos y rama predeterminada."""
+
         def refs(url: str, token: str, role: str) -> dict[str, str]:
             """Obtiene las referencias visibles y sus SHA mediante git ls-remote."""
             completed = self.run_git(
@@ -1310,12 +1525,20 @@ class Migrator:
                     output[name] = sha
             return output
 
-        source_refs = refs(source_project["http_url_to_repo"], self.source_token, "source")
-        target_refs = refs(target_project["http_url_to_repo"], self.target_token, "target")
+        source_refs = refs(
+            source_project["http_url_to_repo"], self.source_token, "source"
+        )
+        target_refs = refs(
+            target_project["http_url_to_repo"], self.target_token, "target"
+        )
         if source_refs != target_refs:
             missing = sorted(set(source_refs) - set(target_refs))
             extra = sorted(set(target_refs) - set(source_refs))
-            changed = sorted(name for name in source_refs.keys() & target_refs.keys() if source_refs[name] != target_refs[name])
+            changed = sorted(
+                name
+                for name in source_refs.keys() & target_refs.keys()
+                if source_refs[name] != target_refs[name]
+            )
             raise MigrationError(
                 f"Verificación Git fallida: {len(missing)} refs ausentes, {len(extra)} extra y {len(changed)} SHA distintos"
             )
@@ -1323,16 +1546,25 @@ class Migrator:
         source_format = source_project.get("repository_object_format", "sha1")
         target_format = target_detail.get("repository_object_format", "sha1")
         if source_format != target_format:
-            raise MigrationError(f"Formato de objetos incompatible: {source_format} -> {target_format}")
-        if bool(source_project.get("lfs_enabled", True)) != bool(target_detail.get("lfs_enabled", True)):
+            raise MigrationError(
+                f"Formato de objetos incompatible: {source_format} -> {target_format}"
+            )
+        if bool(source_project.get("lfs_enabled", True)) != bool(
+            target_detail.get("lfs_enabled", True)
+        ):
             raise MigrationError("La configuración lfs_enabled no coincide en destino")
         default_branch = source_project.get("default_branch")
         if default_branch and f"refs/heads/{default_branch}" not in target_refs:
-            raise MigrationError(f"La rama predeterminada {default_branch} no existe en destino")
+            raise MigrationError(
+                f"La rama predeterminada {default_branch} no existe en destino"
+            )
         if source_project.get("lfs_enabled") and self.args.with_lfs:
-            message = "Los OID de LFS requieren una verificación de muestra independiente"
+            message = (
+                "Los OID de LFS requieren una verificación de muestra independiente"
+            )
             if message not in result.warnings:
                 result.warnings.append(message)
+
     def read_ci_config(
         self,
         repo_dir: Path,
@@ -1340,7 +1572,7 @@ class Migrator:
         result: ItemResult,
     ) -> str | None:
         """Extrae el YAML de CI de la rama principal para validarlo en destino.
-        
+
         Avisa de configuraciones externas, referencias al host antiguo e includes que
         pueden requerir adaptar rutas o permisos."""
         default_branch = source_project.get("default_branch")
@@ -1388,9 +1620,7 @@ class Migrator:
         result: ItemResult,
     ) -> None:
         """Copia variables CI/CD del proyecto y registra su balance."""
-        variables = self.source.paginate(
-            f"/projects/{source_project['id']}/variables"
-        )
+        variables = self.source.paginate(f"/projects/{source_project['id']}/variables")
         if not variables:
             return
         copied, skipped, failed = self.copy_variables(
@@ -1411,7 +1641,7 @@ class Migrator:
         result: ItemResult,
     ) -> None:
         """Replica por separado cada ajuste CI/CD compatible.
-        
+
         Así una propiedad no soportada no bloquea las demás y los recursos que requieren
         credenciales nuevas quedan señalados para revisión."""
         full_source = self.source.get_project(source_project["id"]) or source_project
@@ -1468,14 +1698,20 @@ class Migrator:
         """Copia claves SSH públicas de despliegue de forma idempotente."""
         target_endpoint = f"/projects/{target_project['id']}/deploy_keys"
         try:
-            source_keys = self.source.paginate(f"/projects/{source_project['id']}/deploy_keys")
+            source_keys = self.source.paginate(
+                f"/projects/{source_project['id']}/deploy_keys"
+            )
             target_by_key = {
                 item.get("key"): item
                 for item in self.target.paginate(target_endpoint)
                 if item.get("key")
             }
         except MigrationError as exc:
-            self.mark_partial(result, "No se pudieron inventariar deploy keys: " + redact(str(exc), self.secrets))
+            self.mark_partial(
+                result,
+                "No se pudieron inventariar deploy keys: "
+                + redact(str(exc), self.secrets),
+            )
             return
         copied = 0
         for source_key in source_keys:
@@ -1486,9 +1722,12 @@ class Migrator:
             existing = target_by_key.get(public_key)
             try:
                 if existing:
-                    if bool(existing.get("can_push")) != bool(source_key.get("can_push")):
+                    if bool(existing.get("can_push")) != bool(
+                        source_key.get("can_push")
+                    ):
                         self.target.request(
-                            "PUT", f"{target_endpoint}/{existing['id']}",
+                            "PUT",
+                            f"{target_endpoint}/{existing['id']}",
                             data={"can_push": bool(source_key.get("can_push"))},
                         )
                     continue
@@ -1509,15 +1748,28 @@ class Migrator:
                     f"{redact(str(exc), self.secrets)}",
                 )
         if source_keys:
-            result.details.append(f"Deploy keys: {copied} creadas, {len(source_keys) - copied} existentes o parciales")
+            result.details.append(
+                f"Deploy keys: {copied} creadas, {len(source_keys) - copied} existentes o parciales"
+            )
 
-    def resolve_environment_identity(self, entry: dict[str, Any]) -> dict[str, Any] | None:
+    def resolve_environment_identity(
+        self, entry: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Mapea roles, usuarios y grupos de una regla de entorno protegido."""
         mapped: dict[str, Any]
         if entry.get("user_id"):
             source_user = self.source.request("GET", f"/users/{entry['user_id']}")
-            users = self.target.paginate("/users", query={"username": source_user["username"]})
-            exact = next((item for item in users if item.get("username") == source_user["username"]), None)
+            users = self.target.paginate(
+                "/users", query={"username": source_user["username"]}
+            )
+            exact = next(
+                (
+                    item
+                    for item in users
+                    if item.get("username") == source_user["username"]
+                ),
+                None,
+            )
             if not exact:
                 return None
             mapped = {"user_id": exact["id"]}
@@ -1526,7 +1778,9 @@ class Migrator:
             if not source_group:
                 return None
             source_path = source_group["full_path"]
-            if source_path == self.source_root["full_path"] or source_path.startswith(self.source_root["full_path"] + "/"):
+            if source_path == self.source_root["full_path"] or source_path.startswith(
+                self.source_root["full_path"] + "/"
+            ):
                 source_path = self.target_group_path(source_path)
             target_group = self.target.get_group(source_path)
             if not target_group:
@@ -1542,15 +1796,27 @@ class Migrator:
         return mapped
 
     @staticmethod
-    def normalize_environment_entries(entries: list[dict[str, Any]]) -> set[tuple[Any, ...]]:
+    def normalize_environment_entries(
+        entries: list[dict[str, Any]],
+    ) -> set[tuple[Any, ...]]:
         """Normaliza ACL de entornos para comparar sin IDs internos ni orden."""
         normalized: set[tuple[Any, ...]] = set()
         for entry in entries or []:
             identity = next(
-                ((key, entry[key]) for key in ("user_id", "group_id", "access_level") if entry.get(key) is not None),
+                (
+                    (key, entry[key])
+                    for key in ("user_id", "group_id", "access_level")
+                    if entry.get(key) is not None
+                ),
                 ("unknown", None),
             )
-            normalized.add(identity + (entry.get("group_inheritance_type", 0), entry.get("required_approvals")))
+            normalized.add(
+                identity
+                + (
+                    entry.get("group_inheritance_type", 0),
+                    entry.get("required_approvals"),
+                )
+            )
         return normalized
 
     def copy_protected_environments(
@@ -1568,7 +1834,11 @@ class Migrator:
                 item["name"]: item for item in self.target.paginate(target_endpoint)
             }
         except MigrationError as exc:
-            self.mark_partial(result, "No se pudieron inventariar entornos protegidos: " + redact(str(exc), self.secrets))
+            self.mark_partial(
+                result,
+                "No se pudieron inventariar entornos protegidos: "
+                + redact(str(exc), self.secrets),
+            )
             return
         copied = 0
         for environment in source_environments:
@@ -1586,29 +1856,45 @@ class Migrator:
                         unresolved.append(redact(str(exc), self.secrets))
                         continue
                     if mapped is None:
-                        unresolved.append(f"{source_field}:{entry.get('user_id') or entry.get('group_id') or entry.get('access_level') or '?'}")
+                        unresolved.append(
+                            f"{source_field}:{entry.get('user_id') or entry.get('group_id') or entry.get('access_level') or '?'}"
+                        )
                     else:
                         mapped_entries.append(mapped)
                 if source_field == "deploy_access_levels" or mapped_entries:
                     payload[target_field] = mapped_entries
-            if environment.get("required_approval_count") is not None and not payload.get("approval_rules"):
-                payload["required_approval_count"] = environment["required_approval_count"]
+            if environment.get(
+                "required_approval_count"
+            ) is not None and not payload.get("approval_rules"):
+                payload["required_approval_count"] = environment[
+                    "required_approval_count"
+                ]
             if unresolved:
                 self.mark_partial(
                     result,
-                    f"Entorno {environment['name']} no aplicado; identidades sin mapear: " + ", ".join(unresolved),
+                    f"Entorno {environment['name']} no aplicado; identidades sin mapear: "
+                    + ", ".join(unresolved),
                 )
                 continue
             existing = target_environments.get(environment["name"])
             if existing:
                 mismatches = []
-                if self.normalize_environment_entries(existing.get("deploy_access_levels", [])) != self.normalize_environment_entries(payload.get("deploy_access_levels", [])):
+                if self.normalize_environment_entries(
+                    existing.get("deploy_access_levels", [])
+                ) != self.normalize_environment_entries(
+                    payload.get("deploy_access_levels", [])
+                ):
                     mismatches.append("deploy_access_levels")
-                if self.normalize_environment_entries(existing.get("approval_rules", [])) != self.normalize_environment_entries(payload.get("approval_rules", [])):
+                if self.normalize_environment_entries(
+                    existing.get("approval_rules", [])
+                ) != self.normalize_environment_entries(
+                    payload.get("approval_rules", [])
+                ):
                     mismatches.append("approval_rules")
                 if (
                     "required_approval_count" in payload
-                    and existing.get("required_approval_count") != payload["required_approval_count"]
+                    and existing.get("required_approval_count")
+                    != payload["required_approval_count"]
                 ):
                     mismatches.append("required_approval_count")
                 if mismatches:
@@ -1626,18 +1912,28 @@ class Migrator:
                     f"No se pudo proteger el entorno {environment['name']}: {redact(str(exc), self.secrets)}",
                 )
         if source_environments:
-            result.details.append(f"Entornos protegidos creados: {copied}/{len(source_environments)}")
+            result.details.append(
+                f"Entornos protegidos creados: {copied}/{len(source_environments)}"
+            )
 
-    def map_allowlisted_project(self, source_entry: dict[str, Any]) -> dict[str, Any] | None:
+    def map_allowlisted_project(
+        self, source_entry: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Resuelve un proyecto de allowlist solo cuando pertenece al ámbito migrado."""
         source_path = source_entry.get("path_with_namespace")
         root = self.source_root["full_path"]
-        if not source_path or not (source_path == root or source_path.startswith(root + "/")):
+        if not source_path or not (
+            source_path == root or source_path.startswith(root + "/")
+        ):
             return None
         namespace, project_path = source_path.rsplit("/", 1)
-        return self.target.get_project(f"{self.target_group_path(namespace)}/{project_path}")
+        return self.target.get_project(
+            f"{self.target_group_path(namespace)}/{project_path}"
+        )
 
-    def map_allowlisted_group(self, source_entry: dict[str, Any]) -> dict[str, Any] | None:
+    def map_allowlisted_group(
+        self, source_entry: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Resuelve un grupo de allowlist por su ruta dentro del ámbito migrado."""
         source_group = self.source.get_group(source_entry["id"])
         if not source_group:
@@ -1664,21 +1960,31 @@ class Migrator:
             target_projects = self.target.paginate(f"{target_base}/allowlist")
             target_groups = self.target.paginate(f"{target_base}/groups_allowlist")
         except MigrationError as exc:
-            self.mark_partial(result, "No se pudo inventariar CI_JOB_TOKEN scope: " + redact(str(exc), self.secrets))
+            self.mark_partial(
+                result,
+                "No se pudo inventariar CI_JOB_TOKEN scope: "
+                + redact(str(exc), self.secrets),
+            )
             return
 
         desired_project_ids: set[int] = set()
         for entry in source_projects:
             mapped = self.map_allowlisted_project(entry)
             if not mapped:
-                self.mark_partial(result, f"Proyecto externo/no resuelto en job-token allowlist: {entry.get('path_with_namespace') or entry.get('id')}")
+                self.mark_partial(
+                    result,
+                    f"Proyecto externo/no resuelto en job-token allowlist: {entry.get('path_with_namespace') or entry.get('id')}",
+                )
                 continue
             desired_project_ids.add(int(mapped["id"]))
         desired_group_ids: set[int] = set()
         for entry in source_groups:
             mapped = self.map_allowlisted_group(entry)
             if not mapped:
-                self.mark_partial(result, f"Grupo externo/no resuelto en job-token allowlist: {entry.get('name') or entry.get('id')}")
+                self.mark_partial(
+                    result,
+                    f"Grupo externo/no resuelto en job-token allowlist: {entry.get('name') or entry.get('id')}",
+                )
                 continue
             desired_group_ids.add(int(mapped["id"]))
 
@@ -1686,14 +1992,28 @@ class Migrator:
         current_group_ids = {int(item["id"]) for item in target_groups}
         for project_id in sorted(desired_project_ids - current_project_ids):
             try:
-                self.target.request("POST", f"{target_base}/allowlist", data={"target_project_id": project_id})
+                self.target.request(
+                    "POST",
+                    f"{target_base}/allowlist",
+                    data={"target_project_id": project_id},
+                )
             except MigrationError as exc:
-                self.mark_partial(result, f"No se añadió proyecto {project_id} a job-token allowlist: {redact(str(exc), self.secrets)}")
+                self.mark_partial(
+                    result,
+                    f"No se añadió proyecto {project_id} a job-token allowlist: {redact(str(exc), self.secrets)}",
+                )
         for group_id in sorted(desired_group_ids - current_group_ids):
             try:
-                self.target.request("POST", f"{target_base}/groups_allowlist", data={"target_group_id": group_id})
+                self.target.request(
+                    "POST",
+                    f"{target_base}/groups_allowlist",
+                    data={"target_group_id": group_id},
+                )
             except MigrationError as exc:
-                self.mark_partial(result, f"No se añadió grupo {group_id} a job-token allowlist: {redact(str(exc), self.secrets)}")
+                self.mark_partial(
+                    result,
+                    f"No se añadió grupo {group_id} a job-token allowlist: {redact(str(exc), self.secrets)}",
+                )
 
         enabled = bool(source_scope.get("inbound_enabled"))
         if enabled:
@@ -1705,13 +2025,20 @@ class Migrator:
                     f"Job-token allowlist conserva extras destino: {len(extra_projects)} proyectos y {len(extra_groups)} grupos",
                 )
         try:
-            self.target.request("PATCH", target_base, data={"enabled": enabled}, expect_json=False)
+            self.target.request(
+                "PATCH", target_base, data={"enabled": enabled}, expect_json=False
+            )
         except MigrationError as exc:
-            self.mark_partial(result, "No se pudo ajustar CI_JOB_TOKEN scope: " + redact(str(exc), self.secrets))
+            self.mark_partial(
+                result,
+                "No se pudo ajustar CI_JOB_TOKEN scope: "
+                + redact(str(exc), self.secrets),
+            )
             return
         result.details.append(
             f"CI_JOB_TOKEN scope reconciliado: {len(desired_project_ids)} proyectos y {len(desired_group_ids)} grupos"
         )
+
     def copy_protected_refs(
         self,
         source_project: dict[str, Any],
@@ -1743,31 +2070,59 @@ class Migrator:
         target_project: dict[str, Any],
     ) -> dict[str, int] | None:
         """Mapea roles, usuarios, grupos y deploy keys por identidades estables."""
-        if entry.get("access_level") is not None and not any(entry.get(key) for key in ("user_id", "group_id", "deploy_key_id")):
+        if entry.get("access_level") is not None and not any(
+            entry.get(key) for key in ("user_id", "group_id", "deploy_key_id")
+        ):
             return {"access_level": int(entry["access_level"])}
         if entry.get("user_id"):
             source_user = self.source.request("GET", f"/users/{entry['user_id']}")
-            candidates = self.target.paginate("/users", query={"username": source_user["username"]})
-            exact = next((user for user in candidates if user.get("username") == source_user["username"]), None)
+            candidates = self.target.paginate(
+                "/users", query={"username": source_user["username"]}
+            )
+            exact = next(
+                (
+                    user
+                    for user in candidates
+                    if user.get("username") == source_user["username"]
+                ),
+                None,
+            )
             return {"user_id": exact["id"]} if exact else None
         if entry.get("group_id"):
             source_group = self.source.get_group(entry["group_id"])
             if not source_group:
                 return None
             path = source_group["full_path"]
-            if path == self.source_root["full_path"] or path.startswith(self.source_root["full_path"] + "/"):
+            if path == self.source_root["full_path"] or path.startswith(
+                self.source_root["full_path"] + "/"
+            ):
                 path = self.target_group_path(path)
             target_group = self.target.get_group(path)
             return {"group_id": target_group["id"]} if target_group else None
         if entry.get("deploy_key_id"):
-            source_keys = self.source.paginate(f"/projects/{source_project['id']}/deploy_keys")
-            target_keys = self.target.paginate(f"/projects/{target_project['id']}/deploy_keys")
-            source_key = next((key for key in source_keys if key.get("id") == entry["deploy_key_id"]), None)
+            source_keys = self.source.paginate(
+                f"/projects/{source_project['id']}/deploy_keys"
+            )
+            target_keys = self.target.paginate(
+                f"/projects/{target_project['id']}/deploy_keys"
+            )
+            source_key = next(
+                (key for key in source_keys if key.get("id") == entry["deploy_key_id"]),
+                None,
+            )
             if not source_key:
                 return None
             fingerprints = ("fingerprint_sha256", "fingerprint", "title")
             match = next(
-                (candidate for candidate in target_keys if any(source_key.get(field) and source_key.get(field) == candidate.get(field) for field in fingerprints)),
+                (
+                    candidate
+                    for candidate in target_keys
+                    if any(
+                        source_key.get(field)
+                        and source_key.get(field) == candidate.get(field)
+                        for field in fingerprints
+                    )
+                ),
                 None,
             )
             return {"deploy_key_id": match["id"]} if match else None
@@ -1796,10 +2151,16 @@ class Migrator:
         source_endpoint = f"/projects/{source_project['id']}/protected_{kind}"
         target_endpoint = f"/projects/{target_project['id']}/protected_{kind}"
         source_refs = self.source.paginate(source_endpoint)
-        target_refs = {item["name"]: item for item in self.target.paginate(target_endpoint)}
+        target_refs = {
+            item["name"]: item for item in self.target.paginate(target_endpoint)
+        }
         copied = 0
         mappings = (
-            (("push_access_levels", "allowed_to_push"), ("merge_access_levels", "allowed_to_merge"), ("unprotect_access_levels", "allowed_to_unprotect"))
+            (
+                ("push_access_levels", "allowed_to_push"),
+                ("merge_access_levels", "allowed_to_merge"),
+                ("unprotect_access_levels", "allowed_to_unprotect"),
+            )
             if kind == "branches"
             else (("create_access_levels", "allowed_to_create"),)
         )
@@ -1811,12 +2172,16 @@ class Migrator:
                 mapped: list[dict[str, int]] = []
                 for entry in protected_ref.get(source_field, []):
                     try:
-                        resolved = self.resolve_protection_identity(entry, source_project, target_project)
+                        resolved = self.resolve_protection_identity(
+                            entry, source_project, target_project
+                        )
                     except MigrationError as exc:
                         unresolved.append("API:" + redact(str(exc), self.secrets))
                         continue
                     if resolved is None:
-                        unresolved.append(f"{source_field}:{entry.get('user_id') or entry.get('group_id') or entry.get('deploy_key_id') or '?'}")
+                        unresolved.append(
+                            f"{source_field}:{entry.get('user_id') or entry.get('group_id') or entry.get('deploy_key_id') or '?'}"
+                        )
                     else:
                         mapped.append(resolved)
                 payload[target_field] = mapped
@@ -1825,26 +2190,44 @@ class Migrator:
                     if field_name in protected_ref:
                         payload[field_name] = protected_ref[field_name]
             if unresolved:
-                self.mark_partial(result, f"Protección {name} no aplicada: identidades sin mapear ({', '.join(unresolved)})")
+                self.mark_partial(
+                    result,
+                    f"Protección {name} no aplicada: identidades sin mapear ({', '.join(unresolved)})",
+                )
                 continue
             existing = target_refs.get(name)
             if existing:
                 mismatches = []
                 for source_field, target_field in mappings:
-                    if self.normalize_access_entries(existing.get(source_field, [])) != self.normalize_access_entries(payload[target_field]):
+                    if self.normalize_access_entries(
+                        existing.get(source_field, [])
+                    ) != self.normalize_access_entries(payload[target_field]):
                         mismatches.append(source_field)
-                for field_name in ("allow_force_push", "code_owner_approval_required") if kind == "branches" else ():
-                    if existing.get(field_name, False) != payload.get(field_name, False):
+                for field_name in (
+                    ("allow_force_push", "code_owner_approval_required")
+                    if kind == "branches"
+                    else ()
+                ):
+                    if existing.get(field_name, False) != payload.get(
+                        field_name, False
+                    ):
                         mismatches.append(field_name)
                 if mismatches:
-                    self.mark_partial(result, f"Protección existente {name} difiere ({', '.join(mismatches)}); no se elimina ni relaja automáticamente")
+                    self.mark_partial(
+                        result,
+                        f"Protección existente {name} difiere ({', '.join(mismatches)}); no se elimina ni relaja automáticamente",
+                    )
                 continue
             try:
                 self.target.request("POST", target_endpoint, data=payload)
                 copied += 1
             except MigrationError as exc:
-                self.mark_partial(result, f"No se pudo proteger {name}: {redact(str(exc), self.secrets)}")
+                self.mark_partial(
+                    result,
+                    f"No se pudo proteger {name}: {redact(str(exc), self.secrets)}",
+                )
         return copied
+
     def copy_pipeline_schedules(
         self,
         source_project: dict[str, Any],
@@ -1862,7 +2245,11 @@ class Migrator:
         }
         reconciled = 0
         for schedule in schedules:
-            identity = (schedule.get("description"), schedule.get("ref"), schedule.get("cron"))
+            identity = (
+                schedule.get("description"),
+                schedule.get("ref"),
+                schedule.get("cron"),
+            )
             detail = self.source.request("GET", f"{source_endpoint}/{schedule['id']}")
             candidate = existing_by_identity.get(identity)
             schedule_payload: dict[str, Any] = {
@@ -1885,10 +2272,14 @@ class Migrator:
                     if "inputs" in schedule_payload:
                         update_payload["inputs"] = schedule_payload["inputs"]
                     self.target.request(
-                        "PUT", f"{target_endpoint}/{candidate['id']}", data=update_payload
+                        "PUT",
+                        f"{target_endpoint}/{candidate['id']}",
+                        data=update_payload,
                     )
                 else:
-                    created = self.target.request("POST", target_endpoint, data=schedule_payload)
+                    created = self.target.request(
+                        "POST", target_endpoint, data=schedule_payload
+                    )
                     existing_by_identity[identity] = created
             except MigrationError as exc:
                 self.mark_partial(
@@ -1898,13 +2289,19 @@ class Migrator:
                 )
                 continue
 
-            target_detail = self.target.request("GET", f"{target_endpoint}/{created['id']}")
+            target_detail = self.target.request(
+                "GET", f"{target_endpoint}/{created['id']}"
+            )
             if target_detail.get("active"):
-                self.mark_partial(result, f"La schedule no quedó inactiva: {schedule.get('description')}")
+                self.mark_partial(
+                    result,
+                    f"La schedule no quedó inactiva: {schedule.get('description')}",
+                )
                 continue
-            if (
-                (detail.get("inputs") or []) != (target_detail.get("inputs") or [])
-                or schedule.get("cron_timezone", "UTC") != target_detail.get("cron_timezone", "UTC")
+            if (detail.get("inputs") or []) != (
+                target_detail.get("inputs") or []
+            ) or schedule.get("cron_timezone", "UTC") != target_detail.get(
+                "cron_timezone", "UTC"
             ):
                 self.mark_partial(
                     result,
@@ -1931,14 +2328,13 @@ class Migrator:
                     current = target_variables.get(variable_key)
                     if current is None:
                         self.target.request(
-                            "POST", f"{target_endpoint}/{created['id']}/variables",
+                            "POST",
+                            f"{target_endpoint}/{created['id']}/variables",
                             data=variable_payload,
                         )
-                    elif (
-                        current.get("value") != variable.get("value")
-                        or current.get("variable_type", "env_var")
-                        != variable.get("variable_type", "env_var")
-                    ):
+                    elif current.get("value") != variable.get("value") or current.get(
+                        "variable_type", "env_var"
+                    ) != variable.get("variable_type", "env_var"):
                         self.target.request(
                             "PUT",
                             f"{target_endpoint}/{created['id']}/variables/{encode_path(variable['key'])}",
@@ -1960,6 +2356,7 @@ class Migrator:
             reconciled += 1
         if reconciled:
             result.details.append(f"{reconciled} schedules reconciliadas e inactivas")
+
     def restore_project_state(
         self,
         source_project: dict[str, Any],
@@ -1967,7 +2364,7 @@ class Migrator:
         result: ItemResult,
     ) -> None:
         """Restaura rama predeterminada y acceso CI/CD sin ejecutar pipelines.
-        
+
         Las schedules permanecen inactivas aunque se rehabilite el acceso a builds."""
         full_source = self.source.get_project(source_project["id"]) or source_project
         payload: dict[str, Any] = {
@@ -1988,7 +2385,9 @@ class Migrator:
             )
         if refreshed.get("builds_access_level") != payload["builds_access_level"]:
             raise MigrationError("No se restauró el nivel de acceso de CI/CD")
-        result.details.append("Rama predeterminada y acceso CI/CD restaurados y verificados")
+        result.details.append(
+            "Rama predeterminada y acceso CI/CD restaurados y verificados"
+        )
 
     def validate_ci(self, target_project: dict[str, Any], result: ItemResult) -> None:
         """Valida la configuración almacenada tras migrar todos los includes y revisa runners."""
@@ -1996,12 +2395,16 @@ class Migrator:
         default_branch = detail.get("default_branch")
         config_path = detail.get("ci_config_path") or ".gitlab-ci.yml"
         if not default_branch:
-            result.details.append("CI Lint omitido: repositorio sin rama predeterminada")
+            result.details.append(
+                "CI Lint omitido: repositorio sin rama predeterminada"
+            )
             if result.status == "ok":
                 self.checkpoint_phase(result.source, "complete", target_project)
             return
         if "@" in config_path or "://" in config_path:
-            self.mark_partial(result, f"CI externa requiere validación manual: {config_path}")
+            self.mark_partial(
+                result, f"CI externa requiere validación manual: {config_path}"
+            )
             return
         encoded_file = encode_path(config_path.lstrip("/"))
         file_data = self.target.request(
@@ -2016,26 +2419,43 @@ class Migrator:
                 self.checkpoint_phase(result.source, "complete", target_project)
             return
         try:
-            content = base64.b64decode(file_data["content"]).decode("utf-8", errors="replace")
+            content = base64.b64decode(file_data["content"]).decode(
+                "utf-8", errors="replace"
+            )
             lint = self.target.request(
                 "POST",
                 f"/projects/{target_project['id']}/ci/lint",
-                data={"content": content, "dry_run": True, "include_jobs": True, "ref": default_branch},
+                data={
+                    "content": content,
+                    "dry_run": True,
+                    "include_jobs": True,
+                    "ref": default_branch,
+                },
             )
         except (MigrationError, ValueError, KeyError) as exc:
-            self.mark_partial(result, "No se pudo ejecutar CI Lint efectivo: " + redact(str(exc), self.secrets))
+            self.mark_partial(
+                result,
+                "No se pudo ejecutar CI Lint efectivo: "
+                + redact(str(exc), self.secrets),
+            )
             return
         valid = lint.get("valid")
         if valid is None:
             valid = lint.get("status") == "valid"
         if not valid:
             errors = lint.get("errors") or [lint.get("message", "Error no detallado")]
-            self.mark_partial(result, "CI Lint no válido: " + "; ".join(map(str, errors)))
+            self.mark_partial(
+                result, "CI Lint no válido: " + "; ".join(map(str, errors))
+            )
             return
         result.details.append("CI Lint válido con dry_run e includes resueltos")
         jobs = lint.get("jobs") or []
-        runners = self.target.paginate(f"/projects/{target_project['id']}/runners", query={"status": "online"})
-        available_runners = [runner for runner in runners if not runner.get("paused", False)]
+        runners = self.target.paginate(
+            f"/projects/{target_project['id']}/runners", query={"status": "online"}
+        )
+        available_runners = [
+            runner for runner in runners if not runner.get("paused", False)
+        ]
         unavailable: list[str] = []
         for job in jobs:
             tags = set(job.get("tag_list") or job.get("tags") or [])
@@ -2046,16 +2466,21 @@ class Migrator:
                 )
                 label = ",".join(sorted(tags))
             else:
-                compatible = any(runner.get("run_untagged", False) for runner in available_runners)
+                compatible = any(
+                    runner.get("run_untagged", False) for runner in available_runners
+                )
                 label = "sin-tags"
             if not compatible:
                 unavailable.append(f"{job.get('name', '?')}[{label}]")
         if unavailable:
-            self.mark_partial(result, "Jobs sin runner online compatible: " + ", ".join(unavailable))
+            self.mark_partial(
+                result, "Jobs sin runner online compatible: " + ", ".join(unavailable)
+            )
         else:
             result.details.append(f"Runners revisados para {len(jobs)} jobs expandidos")
             if result.status == "ok":
                 self.checkpoint_phase(result.source, "complete", target_project)
+
     def copy_wiki(
         self,
         source_project: dict[str, Any],
@@ -2063,11 +2488,15 @@ class Migrator:
         result: ItemResult,
     ) -> None:
         """Intenta copiar el repositorio Git independiente de la wiki.
-        
+
         Una wiki ausente es normal y un fallo de envío no invalida el repositorio principal."""
-        source_url = source_project["http_url_to_repo"].removesuffix(".git") + ".wiki.git"
-        target_url = target_project["http_url_to_repo"].removesuffix(".git") + ".wiki.git"
-        with tempfile.TemporaryDirectory(prefix="gitlab-wiki-migration-") as temp_dir:
+        source_url = (
+            source_project["http_url_to_repo"].removesuffix(".git") + ".wiki.git"
+        )
+        target_url = (
+            target_project["http_url_to_repo"].removesuffix(".git") + ".wiki.git"
+        )
+        with tempfile.TemporaryDirectory(prefix="glim-wiki-") as temp_dir:
             wiki_dir = Path(temp_dir) / "wiki.git"
             clone = self.run_git(
                 ["git", "clone", "--mirror", source_url, str(wiki_dir)],
@@ -2077,7 +2506,9 @@ class Migrator:
                 allow_failure=True,
             )
             if clone.returncode:
-                LOG.debug("Wiki no disponible para %s", source_project["path_with_namespace"])
+                LOG.debug(
+                    "Wiki no disponible para %s", source_project["path_with_namespace"]
+                )
                 return
             self.run_git(
                 ["git", "remote", "add", "destination", target_url],
@@ -2126,7 +2557,7 @@ def configure_logging(verbose: bool) -> None:
 
 def main() -> int:
     """Valida argumentos y secretos, ejecuta la migración y escribe el informe.
-    
+
     Devuelve 0 sin fallos, 1 ante error global, 2 con proyectos fallidos y 130 ante
     interrupción del usuario."""
     parser = build_parser()
@@ -2145,9 +2576,7 @@ def main() -> int:
         if not value
     ]
     if missing:
-        parser.error(
-            "Faltan variables de entorno obligatorias: " + ", ".join(missing)
-        )
+        parser.error("Faltan variables de entorno obligatorias: " + ", ".join(missing))
 
     report_path = args.report or default_report_path()
     migrator: Migrator | None = None

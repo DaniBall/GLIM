@@ -25,10 +25,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Compile script and tests
-        run: python -m compileall -q migrate_gitlab_group.py tests
+        run: python -m compileall -q glim.py tests
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
       - name: Check command help
-        run: python migrate_gitlab_group.py --help
+        run: python glim.py --help

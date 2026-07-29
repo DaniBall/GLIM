@@ -88,7 +88,7 @@ No hay dependencias externas de Python. Git y Git LFS son herramientas del siste
 python --version
 git --version
 git lfs version
-python .\migrate_gitlab_group.py --help
+python .\glim.py --help
 ```
 
 Instalación editable opcional:
@@ -105,7 +105,7 @@ Sin activar el entorno:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --editable .
-.\.venv\Scripts\python.exe .\migrate_gitlab_group.py --help
+.\.venv\Scripts\python.exe .\glim.py --help
 ```
 
 ### CMD
@@ -114,7 +114,7 @@ Sin activar el entorno:
 python --version
 git --version
 git lfs version
-python migrate_gitlab_group.py --help
+python glim.py --help
 ```
 
 Instalación editable opcional:
@@ -131,7 +131,7 @@ Sin activar el entorno:
 
 ```bat
 .venv\Scripts\python.exe -m pip install --editable .
-.venv\Scripts\python.exe migrate_gitlab_group.py --help
+.venv\Scripts\python.exe glim.py --help
 ```
 
 ### Linux con Bash
@@ -142,7 +142,7 @@ Instala Python 3.10+, Git y Git LFS con el gestor de paquetes de tu distribució
 python3 --version
 git --version
 git lfs version
-python3 ./migrate_gitlab_group.py --help
+python3 ./glim.py --help
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
@@ -154,7 +154,7 @@ Sin activar el entorno:
 
 ```bash
 .venv/bin/python -m pip install --editable .
-.venv/bin/python ./migrate_gitlab_group.py --help
+.venv/bin/python ./glim.py --help
 ```
 
 ### Ubuntu con Bash
@@ -166,7 +166,7 @@ git lfs install
 python3 --version
 git --version
 git lfs version
-python3 ./migrate_gitlab_group.py --help
+python3 ./glim.py --help
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
@@ -178,7 +178,7 @@ Sin activar el entorno:
 
 ```bash
 .venv/bin/python -m pip install --editable .
-.venv/bin/python ./migrate_gitlab_group.py --help
+.venv/bin/python ./glim.py --help
 ```
 
 Si no se necesita LFS, añade `--no-with-lfs`. Con LFS habilitado, el dry-run avisa si falta `git-lfs`, pero `--execute` aborta antes de modificar el destino.
@@ -365,7 +365,7 @@ El dry-run consulta ambas APIs y genera el plan sin modificar el destino. Requie
 ### PowerShell
 
 ```powershell
-python .\migrate_gitlab_group.py `
+python .\glim.py `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -378,7 +378,7 @@ python .\migrate_gitlab_group.py `
 ### CMD
 
 ```bat
-python migrate_gitlab_group.py ^
+python glim.py ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -391,7 +391,7 @@ python migrate_gitlab_group.py ^
 ### Linux con Bash
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -404,7 +404,7 @@ python3 ./migrate_gitlab_group.py \
 ### Ubuntu con Bash
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -424,7 +424,7 @@ Usa una ruta de checkpoint que no contenga evidencia de otra migración. Durante
 ### PowerShell
 
 ```powershell
-python .\migrate_gitlab_group.py `
+python .\glim.py `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -437,7 +437,7 @@ python .\migrate_gitlab_group.py `
 ### CMD
 
 ```bat
-python migrate_gitlab_group.py ^
+python glim.py ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -450,7 +450,7 @@ python migrate_gitlab_group.py ^
 ### Linux con Bash
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -463,7 +463,7 @@ python3 ./migrate_gitlab_group.py \
 ### Ubuntu con Bash
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -503,7 +503,7 @@ Las variables heredadas desde grupos superiores se inventarían, pero no se copi
 ### PowerShell
 
 ```powershell
-python .\migrate_gitlab_group.py `
+python .\glim.py `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -517,7 +517,7 @@ python .\migrate_gitlab_group.py `
 ### CMD
 
 ```bat
-python migrate_gitlab_group.py ^
+python glim.py ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -531,7 +531,7 @@ python migrate_gitlab_group.py ^
 ### Linux con Bash
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -545,7 +545,7 @@ python3 ./migrate_gitlab_group.py \
 ### Ubuntu con Bash
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -586,10 +586,10 @@ Si el checkpoint registra `existing_update`, repite `--existing update`. `--resu
 
 Comprueba siempre la versión local:
 
-- PowerShell: `python .\migrate_gitlab_group.py --help`
-- CMD: `python migrate_gitlab_group.py --help`
-- Linux/Bash: `python3 ./migrate_gitlab_group.py --help`
-- Ubuntu/Bash: `python3 ./migrate_gitlab_group.py --help`
+- PowerShell: `python .\glim.py --help`
+- CMD: `python glim.py --help`
+- Linux/Bash: `python3 ./glim.py --help`
+- Ubuntu/Bash: `python3 ./glim.py --help`
 
 [Volver al índice](#índice)
 
@@ -602,7 +602,7 @@ Instalar la CA en los almacenes usados por el sistema, Python y Git es la opció
 CA común:
 
 ```powershell
-python .\migrate_gitlab_group.py `
+python .\glim.py `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -613,7 +613,7 @@ python .\migrate_gitlab_group.py `
 CA separadas:
 
 ```powershell
-python .\migrate_gitlab_group.py `
+python .\glim.py `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -634,7 +634,7 @@ python -c "import urllib.request; print(urllib.request.urlopen('https://gitlab.e
 CA común:
 
 ```bat
-python migrate_gitlab_group.py ^
+python glim.py ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -645,7 +645,7 @@ python migrate_gitlab_group.py ^
 CA separadas:
 
 ```bat
-python migrate_gitlab_group.py ^
+python glim.py ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -666,7 +666,7 @@ python -c "import urllib.request; print(urllib.request.urlopen('https://gitlab.e
 CA común:
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -677,7 +677,7 @@ python3 ./migrate_gitlab_group.py \
 CA separadas:
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -698,7 +698,7 @@ python3 -c "import urllib.request; print(urllib.request.urlopen('https://gitlab.
 CA común:
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -709,7 +709,7 @@ python3 ./migrate_gitlab_group.py \
 CA separadas:
 
 ```bash
-python3 ./migrate_gitlab_group.py \
+python3 ./glim.py \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -738,32 +738,32 @@ Las pruebas usan respuestas simuladas y no deben conectarse a GitLab ni usar tok
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m py_compile .\migrate_gitlab_group.py
-python .\migrate_gitlab_group.py --help
+python -m py_compile .\glim.py
+python .\glim.py --help
 ```
 
 ### CMD
 
 ```bat
 python -m unittest discover -s tests -v
-python -m py_compile migrate_gitlab_group.py
-python migrate_gitlab_group.py --help
+python -m py_compile glim.py
+python glim.py --help
 ```
 
 ### Linux con Bash
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile ./migrate_gitlab_group.py
-python3 ./migrate_gitlab_group.py --help
+python3 -m py_compile ./glim.py
+python3 ./glim.py --help
 ```
 
 ### Ubuntu con Bash
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile ./migrate_gitlab_group.py
-python3 ./migrate_gitlab_group.py --help
+python3 -m py_compile ./glim.py
+python3 ./glim.py --help
 ```
 
 Consulta [CONTRIBUTING.md](CONTRIBUTING.md). GitHub Actions ejecuta estas validaciones sin acceder a GitLab reales ni recibir tokens.
@@ -869,7 +869,7 @@ Códigos de salida:
 
 ```text
 .
-|-- migrate_gitlab_group.py   # Implementación y CLI
+|-- glim.py   # Implementación y CLI
 |-- tests/                     # Pruebas unitarias
 |-- .github/workflows/         # GitHub Actions
 |-- pyproject.toml             # Metadatos y comando instalable

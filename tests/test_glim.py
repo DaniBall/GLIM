@@ -12,8 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import migrate_gitlab_group as migration
-
+import glim as migration
 
 REQUIRED_ARGS = [
     "--source-url",
@@ -85,7 +84,10 @@ class CheckpointTests(unittest.TestCase):
             "update",
             "--overwrite-ci-variables",
         )
-        with patch.object(Path, "write_text") as write_text, patch.object(migration.os, "replace"):
+        with (
+            patch.object(Path, "write_text") as write_text,
+            patch.object(migration.os, "replace"),
+        ):
             migrator.checkpoint_phase(
                 "company/source/service",
                 "repository",
@@ -122,7 +124,11 @@ class CheckpointTests(unittest.TestCase):
 
     def test_resume_rejects_checkpoint_with_different_options(self):
         original = build_migrator("--execute", "--checkpoint", "state.json")
-        saved = {"version": 2, "identity": original.checkpoint_identity(), "projects": {}}
+        saved = {
+            "version": 2,
+            "identity": original.checkpoint_identity(),
+            "projects": {},
+        }
         resumed = build_migrator(
             "--execute",
             "--resume",
@@ -229,10 +235,16 @@ class PipelineScheduleTests(unittest.TestCase):
 
         migrator.copy_pipeline_schedules({"id": 1}, {"id": 2}, result)
 
-        creation = next(call for call in calls if call[0] == "POST" and call[1].endswith("/pipeline_schedules"))
+        creation = next(
+            call
+            for call in calls
+            if call[0] == "POST" and call[1].endswith("/pipeline_schedules")
+        )
         self.assertFalse(creation[2]["data"]["active"])
         self.assertEqual(creation[2]["data"]["inputs"], source_detail["inputs"])
-        self.assertTrue(any(call[1].endswith("/pipeline_schedules/99/variables") for call in calls))
+        self.assertTrue(
+            any(call[1].endswith("/pipeline_schedules/99/variables") for call in calls)
+        )
         self.assertEqual(result.status, "ok")
         self.assertIn("1 schedules reconciliadas e inactivas", result.details)
 
@@ -241,7 +253,11 @@ class RunnerValidationTests(unittest.TestCase):
     def test_ci_becomes_partial_when_no_online_runner_matches_job_tags(self):
         migrator = build_migrator()
         migrator.target.get_project = Mock(
-            return_value={"id": 2, "default_branch": "main", "ci_config_path": ".gitlab-ci.yml"}
+            return_value={
+                "id": 2,
+                "default_branch": "main",
+                "ci_config_path": ".gitlab-ci.yml",
+            }
         )
         encoded_ci = base64.b64encode(b"build:\n  script: echo ok\n").decode("ascii")
 
@@ -249,19 +265,26 @@ class RunnerValidationTests(unittest.TestCase):
             if method == "GET" and "/repository/files/" in path:
                 return {"content": encoded_ci}
             if method == "POST" and path.endswith("/ci/lint"):
-                return {"valid": True, "jobs": [{"name": "deploy", "tag_list": ["docker"]}]}
+                return {
+                    "valid": True,
+                    "jobs": [{"name": "deploy", "tag_list": ["docker"]}],
+                }
             raise AssertionError(f"Llamada inesperada: {method} {path}")
 
         migrator.target.request = Mock(side_effect=target_request)
         migrator.target.paginate = Mock(
-            return_value=[{"paused": False, "tag_list": ["shell"], "run_untagged": True}]
+            return_value=[
+                {"paused": False, "tag_list": ["shell"], "run_untagged": True}
+            ]
         )
         result = migration.ItemResult("project", "source/a", "target/a", "ok")
 
         migrator.validate_ci({"id": 2}, result)
 
         self.assertEqual(result.status, "partial")
-        self.assertTrue(any("Jobs sin runner online compatible" in error for error in result.errors))
+        self.assertTrue(
+            any("Jobs sin runner online compatible" in error for error in result.errors)
+        )
         migrator.target.paginate.assert_called_once_with(
             "/projects/2/runners", query={"status": "online"}
         )

@@ -26,8 +26,8 @@ Antes de proponer un cambio, ejecuta:
 
 ```powershell
 python -m unittest discover -s tests -v
-python -m py_compile .\migrate_gitlab_group.py
-python .\migrate_gitlab_group.py --help
+python -m py_compile .\glim.py
+python .\glim.py --help
 ```
 
 Si el cambio afecta a Git, LFS, APIs o CI/CD, añade pruebas unitarias con respuestas simuladas. Las pruebas no deben depender de instancias empresariales ni de credenciales reales.

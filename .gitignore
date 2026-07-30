@@ -41,6 +41,7 @@ migration-report*.json
 migration-dry-run*.json
 migration-execution*.json
 migration-resume*.json
+migration-dry-run*.json
 checkpoints/
 reports/
 
@@ -58,3 +59,4 @@ Desktop.ini
 *.log
 *.tmp
 *.temp
+tests/porhacer.txt

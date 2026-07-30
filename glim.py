@@ -369,6 +369,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--no-ci-variables",
+        action="store_true",
+        help=(
+            "No consulta ni migra variables CI/CD de grupos, proyectos "
+            "o pipeline schedules"
+        ),
+    )
+    parser.add_argument(
         "--overwrite-ci-variables",
         action="store_true",
         help="Actualiza variables CI/CD que ya existan en destino",
@@ -432,6 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Muestra información adicional sin revelar secretos",
     )
+
     return parser
 
 
@@ -506,18 +515,43 @@ class Migrator:
     def run(self) -> MigrationReport:
         """Descubre y valida todo el ámbito antes de efectuar la primera mutación."""
         self.preflight()
+
         source_groups = self.discover_groups()
+
         self.source_projects = [
             self.source.get_project(project["id"]) or project
             for project in self.discover_projects()
         ]
-        self.validate_migration_scope(source_groups, self.source_projects)
-        self.inventory_inherited_group_variables()
-        self.ensure_target_groups(source_groups)
-        self.copy_group_variables(source_groups)
 
-        LOG.info("Se procesarán %d proyectos", len(self.source_projects))
-        for index, project in enumerate(self.source_projects, start=1):
+        self.validate_migration_scope(
+            source_groups,
+            self.source_projects,
+        )
+
+        if self.args.no_ci_variables:
+            warning = (
+                "La migración de variables CI/CD está desactivada mediante "
+                "--no-ci-variables"
+            )
+            LOG.warning(warning)
+            self.report.warnings.append(warning)
+        else:
+            self.inventory_inherited_group_variables()
+
+        self.ensure_target_groups(source_groups)
+
+        if not self.args.no_ci_variables:
+            self.copy_group_variables(source_groups)
+
+        LOG.info(
+            "Se procesarán %d proyectos",
+            len(self.source_projects),
+        )
+
+        for index, project in enumerate(
+            self.source_projects,
+            start=1,
+        ):
             LOG.info(
                 "[%d/%d] %s",
                 index,
@@ -589,6 +623,7 @@ class Migrator:
                 "with_wikis": self.args.with_wikis,
                 "existing": self.args.existing,
                 "overwrite_ci_variables": self.args.overwrite_ci_variables,
+                "no_ci_variables": self.args.no_ci_variables,
             },
         }
 
@@ -697,6 +732,10 @@ class Migrator:
         """Completa controles de seguridad antes de crear grupos o proyectos."""
         source_url = clean_base_url(self.args.source_url)
         target_url = clean_base_url(self.args.target_url)
+        if self.args.no_ci_variables and self.args.overwrite_ci_variables:
+            raise MigrationError(
+                "--no-ci-variables no puede combinarse con --overwrite-ci-variables"
+            )
         for role, value in (("origen", source_url), ("destino", target_url)):
             parsed = urlsplit(value)
             if parsed.scheme not in {"https", "http"} or not parsed.netloc:
@@ -778,8 +817,10 @@ class Migrator:
         ):
             raise MigrationError("Origen y destino resuelven al mismo namespace")
         group_paths = {group["full_path"] for group in groups}
-        for group in groups:
-            self.source.paginate(f"/groups/{group['id']}/variables")
+
+        if not self.args.no_ci_variables:
+            for group in groups:
+                self.source.paginate(f"/groups/{group['id']}/variables")
         for project in projects:
             namespace = project.get("namespace", {}).get("full_path")
             if namespace not in group_paths:
@@ -846,18 +887,26 @@ class Migrator:
                     f"{project['path_with_namespace']}: LFS está habilitado pero se ha desactivado su migración"
                 )
             # Estos GET anticipan permisos insuficientes antes de la primera escritura.
-            for endpoint in (
-                "variables",
+            endpoints = [
                 "protected_branches",
                 "protected_tags",
                 "pipeline_schedules",
-            ):
+            ]
+
+            if not self.args.no_ci_variables:
+                endpoints.insert(0, "variables")
+
+            for endpoint in endpoints:
                 values = self.source.paginate(f"/projects/{project['id']}/{endpoint}")
+
                 if endpoint == "pipeline_schedules":
                     for schedule in values:
                         self.source.request(
                             "GET",
-                            f"/projects/{project['id']}/pipeline_schedules/{schedule['id']}",
+                            (
+                                f"/projects/{project['id']}"
+                                f"/pipeline_schedules/{schedule['id']}"
+                            ),
                         )
             # Funciones dependientes de tier/versión se inventarían sin abortar el
             # grupo completo; durante la ejecución se convertirán en partial.
@@ -1248,11 +1297,24 @@ class Migrator:
                 self.copy_repository(source_project, target_project, result)
                 if len(result.errors) == before:
                     self.checkpoint_phase(source_path, "repository", target_project)
-            if not self.phase_completed(source_path, "variables"):
-                before = len(result.errors)
-                self.copy_project_variables(source_project, target_project, result)
-                if len(result.errors) == before:
-                    self.checkpoint_phase(source_path, "variables", target_project)
+            if not self.args.no_ci_variables:
+                if not self.phase_completed(source_path, "variables"):
+                    before = len(result.errors)
+                    self.copy_project_variables(
+                        source_project,
+                        target_project,
+                        result,
+                    )
+                    if len(result.errors) == before:
+                        self.checkpoint_phase(
+                            source_path,
+                            "variables",
+                            target_project,
+                        )
+            else:
+                result.details.append(
+                    "Variables CI/CD de proyecto omitidas por --no-ci-variables"
+                )
             if not self.phase_completed(source_path, "settings"):
                 before = len(result.errors)
                 self.copy_project_ci_settings(source_project, target_project, result)
@@ -1328,19 +1390,37 @@ class Migrator:
             if target_exists
             else "Crearía el proyecto"
         )
+
         details = [
             action,
             "Migraría todas las referencias Git",
-            "Copiaría variables y ajustes CI/CD",
-            "Copiaría deploy keys públicas antes de las protecciones",
-            "Crearía schedules inactivas",
-            "Copiaría protecciones de refs y entornos protegidos compatibles",
-            "Reconciliaría CI_JOB_TOKEN scope y validaría CI Lint",
         ]
+
+        if self.args.no_ci_variables:
+            details.extend(
+                [
+                    "Omitiría las variables CI/CD de proyecto y schedules",
+                    "Copiaría los ajustes CI/CD compatibles",
+                ]
+            )
+        else:
+            details.append("Copiaría variables y ajustes CI/CD")
+
+        details.extend(
+            [
+                "Copiaría deploy keys públicas antes de las protecciones",
+                "Crearía schedules inactivas",
+                "Copiaría protecciones de refs y entornos protegidos compatibles",
+                "Reconciliaría CI_JOB_TOKEN scope y validaría CI Lint",
+            ]
+        )
+
         if self.args.with_lfs:
             details.append("Migraría Git LFS si está disponible")
+
         if self.args.with_wikis:
             details.append("Intentaría migrar la wiki")
+
         return details
 
     def create_target_project(
@@ -2234,24 +2314,42 @@ class Migrator:
         target_project: dict[str, Any],
         result: ItemResult,
     ) -> None:
-        """Crea o reconcilia schedules, inputs y variables, siempre inactivas."""
+        """Crea o reconcilia schedules e inputs, siempre inactivas.
+
+        Las variables de las schedules solo se copian cuando no se ha usado
+        ``--no-ci-variables``.
+        """
         source_endpoint = f"/projects/{source_project['id']}/pipeline_schedules"
         target_endpoint = f"/projects/{target_project['id']}/pipeline_schedules"
+
         schedules = self.source.paginate(source_endpoint)
         existing = self.target.paginate(target_endpoint)
+
         existing_by_identity = {
-            (item.get("description"), item.get("ref"), item.get("cron")): item
+            (
+                item.get("description"),
+                item.get("ref"),
+                item.get("cron"),
+            ): item
             for item in existing
         }
+
         reconciled = 0
+
         for schedule in schedules:
             identity = (
                 schedule.get("description"),
                 schedule.get("ref"),
                 schedule.get("cron"),
             )
-            detail = self.source.request("GET", f"{source_endpoint}/{schedule['id']}")
+
+            detail = self.source.request(
+                "GET",
+                f"{source_endpoint}/{schedule['id']}",
+            )
+
             candidate = existing_by_identity.get(identity)
+
             schedule_payload: dict[str, Any] = {
                 "description": schedule["description"],
                 "ref": schedule["ref"],
@@ -2259,18 +2357,22 @@ class Migrator:
                 "cron_timezone": schedule.get("cron_timezone", "UTC"),
                 "active": False,
             }
+
             if detail.get("inputs") is not None:
                 schedule_payload["inputs"] = detail["inputs"]
 
             try:
                 if candidate:
                     created = candidate
-                    update_payload = {
+
+                    update_payload: dict[str, Any] = {
                         "active": False,
                         "cron_timezone": schedule_payload["cron_timezone"],
                     }
+
                     if "inputs" in schedule_payload:
                         update_payload["inputs"] = schedule_payload["inputs"]
+
                     self.target.request(
                         "PUT",
                         f"{target_endpoint}/{candidate['id']}",
@@ -2278,26 +2380,35 @@ class Migrator:
                     )
                 else:
                     created = self.target.request(
-                        "POST", target_endpoint, data=schedule_payload
+                        "POST",
+                        target_endpoint,
+                        data=schedule_payload,
                     )
                     existing_by_identity[identity] = created
+
             except MigrationError as exc:
                 self.mark_partial(
                     result,
-                    f"No se pudo crear o reconciliar la schedule {schedule.get('description')}: "
-                    f"{redact(str(exc), self.secrets)}",
+                    (
+                        "No se pudo crear o reconciliar la schedule "
+                        f"{schedule.get('description')}: "
+                        f"{redact(str(exc), self.secrets)}"
+                    ),
                 )
                 continue
 
             target_detail = self.target.request(
-                "GET", f"{target_endpoint}/{created['id']}"
+                "GET",
+                f"{target_endpoint}/{created['id']}",
             )
+
             if target_detail.get("active"):
                 self.mark_partial(
                     result,
-                    f"La schedule no quedó inactiva: {schedule.get('description')}",
+                    (f"La schedule no quedó inactiva: {schedule.get('description')}"),
                 )
                 continue
+
             if (detail.get("inputs") or []) != (
                 target_detail.get("inputs") or []
             ) or schedule.get("cron_timezone", "UTC") != target_detail.get(
@@ -2305,55 +2416,101 @@ class Migrator:
             ):
                 self.mark_partial(
                     result,
-                    f"Schedule no reconciliada en zona horaria o inputs: {schedule.get('description')}",
+                    (
+                        "Schedule no reconciliada en zona horaria o inputs: "
+                        f"{schedule.get('description')}"
+                    ),
                 )
 
-            source_variables = {
-                item.get("key"): item
-                for item in detail.get("variables") or []
-                if item.get("key")
-            }
-            target_variables = {
-                item.get("key"): item
-                for item in target_detail.get("variables") or []
-                if item.get("key")
-            }
-            for variable_key, variable in source_variables.items():
-                variable_payload = {
-                    field: variable[field]
-                    for field in ("key", "value", "variable_type")
-                    if field in variable
+            if self.args.no_ci_variables:
+                schedule_variables = detail.get("variables") or []
+
+                if schedule_variables:
+                    result.warnings.append(
+                        f"Se omitieron {len(schedule_variables)} variables "
+                        "de la schedule "
+                        f"{schedule.get('description', '?')}"
+                    )
+            else:
+                source_variables = {
+                    item.get("key"): item
+                    for item in detail.get("variables") or []
+                    if item.get("key")
                 }
-                try:
-                    current = target_variables.get(variable_key)
-                    if current is None:
-                        self.target.request(
-                            "POST",
-                            f"{target_endpoint}/{created['id']}/variables",
-                            data=variable_payload,
+
+                target_variables = {
+                    item.get("key"): item
+                    for item in target_detail.get("variables") or []
+                    if item.get("key")
+                }
+
+                for variable_key, variable in source_variables.items():
+                    variable_payload = {
+                        field: variable[field]
+                        for field in (
+                            "key",
+                            "value",
+                            "variable_type",
                         )
-                    elif current.get("value") != variable.get("value") or current.get(
-                        "variable_type", "env_var"
-                    ) != variable.get("variable_type", "env_var"):
-                        self.target.request(
-                            "PUT",
-                            f"{target_endpoint}/{created['id']}/variables/{encode_path(variable['key'])}",
-                            data=variable_payload,
+                        if field in variable
+                    }
+
+                    try:
+                        current = target_variables.get(variable_key)
+
+                        if current is None:
+                            self.target.request(
+                                "POST",
+                                (f"{target_endpoint}/{created['id']}/variables"),
+                                data=variable_payload,
+                            )
+                        elif current.get("value") != variable.get(
+                            "value"
+                        ) or current.get(
+                            "variable_type",
+                            "env_var",
+                        ) != variable.get(
+                            "variable_type",
+                            "env_var",
+                        ):
+                            self.target.request(
+                                "PUT",
+                                (
+                                    f"{target_endpoint}/{created['id']}"
+                                    "/variables/"
+                                    f"{encode_path(variable['key'])}"
+                                ),
+                                data=variable_payload,
+                            )
+
+                    except MigrationError as exc:
+                        self.mark_partial(
+                            result,
+                            (
+                                "Variable de schedule "
+                                f"{schedule.get('description', '?')}/"
+                                f"{variable.get('key', '?')}: "
+                                + redact(
+                                    str(exc),
+                                    self.secrets + [str(variable.get("value", ""))],
+                                )
+                            ),
                         )
-                except MigrationError as exc:
+
+                extra_variables = sorted(set(target_variables) - set(source_variables))
+
+                if extra_variables:
                     self.mark_partial(
                         result,
-                        f"Variable de schedule {schedule['description']}/{variable.get('key')}: "
-                        f"{redact(str(exc), self.secrets + [str(variable.get('value', ''))])}",
+                        (
+                            f"Schedule {schedule['description']} conserva "
+                            "variables exclusivas de destino: "
+                            + ", ".join(key or "?" for key in extra_variables)
+                        ),
                     )
-            extra_variables = sorted(set(target_variables) - set(source_variables))
-            if extra_variables:
-                self.mark_partial(
-                    result,
-                    f"Schedule {schedule['description']} conserva variables exclusivas de destino: "
-                    + ", ".join(key or "?" for key in extra_variables),
-                )
+
             reconciled += 1
+
         if reconciled:
             result.details.append(f"{reconciled} schedules reconciliadas e inactivas")
 

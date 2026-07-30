@@ -98,7 +98,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install --editable .
-migrate-gitlab-group --help
+glim --help
 ```
 
 Sin activar el entorno:
@@ -124,7 +124,7 @@ python -m venv .venv
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 python -m pip install --editable .
-migrate-gitlab-group --help
+glim --help
 ```
 
 Sin activar el entorno:
@@ -147,7 +147,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install --editable .
-migrate-gitlab-group --help
+glim --help
 ```
 
 Sin activar el entorno:
@@ -171,7 +171,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install --editable .
-migrate-gitlab-group --help
+glim --help
 ```
 
 Sin activar el entorno:

@@ -74,6 +74,7 @@ class RedactionTests(unittest.TestCase):
 
 class CheckpointTests(unittest.TestCase):
     def test_checkpoint_v2_records_scope_and_options_without_tokens(self):
+        """Comprueba el contenido durable y que nunca incluya credenciales."""
         migrator = build_migrator(
             "--execute",
             "--checkpoint",
@@ -111,6 +112,7 @@ class CheckpointTests(unittest.TestCase):
                 "with_wikis": True,
                 "existing": "update",
                 "overwrite_ci_variables": True,
+                "no_ci_variables": False,
             },
         )
         self.assertEqual(
@@ -121,6 +123,14 @@ class CheckpointTests(unittest.TestCase):
         self.assertNotIn("target-token", raw)
         self.assertNotIn("GITLAB_SOURCE_TOKEN", raw)
         self.assertNotIn("GITLAB_TARGET_TOKEN", raw)
+
+    def test_no_ci_variables_is_part_of_checkpoint_identity(self):
+        """Conserva la exclusión de variables al validar una reanudación."""
+        migrator = build_migrator("--no-ci-variables")
+
+        options = migrator.checkpoint_identity()["options"]
+
+        self.assertTrue(options["no_ci_variables"])
 
     def test_resume_rejects_checkpoint_with_different_options(self):
         original = build_migrator("--execute", "--checkpoint", "state.json")

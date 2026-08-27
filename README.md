@@ -15,6 +15,7 @@ El script trabaja en **modo simulación por defecto**. Solo modifica el destino 
 - [Dry-run](#dry-run)
 - [Ejecución real](#ejecución-real)
 - [Proyectos existentes](#proyectos-existentes)
+- [Excluir variables CI/CD](#excluir-variables-cicd)
 - [Informes, checkpoint y reanudación](#informes-checkpoint-y-reanudación)
 - [Opciones habituales](#opciones-habituales)
 - [CA corporativa y TLS](#ca-corporativa-y-tls)
@@ -80,108 +81,244 @@ No escribas tokens en el script, comandos, perfiles, `.env`, historiales ni arch
 
 ## Instalación y comprobación
 
-No hay dependencias externas de Python. Git y Git LFS son herramientas del sistema.
+Esta guía instala GLIM directamente desde el repositorio. La herramienta no tiene
+dependencias externas de Python en tiempo de ejecución, pero sí necesita Git y,
+si los proyectos contienen objetos LFS, Git LFS. La instalación recomendada usa
+un entorno virtual para no alterar el Python global del equipo.
 
-### PowerShell
+Al terminar esta sección tendrás disponible el comando `glim`. Todavía no se
+realizará ninguna conexión a GitLab: `glim --help` no necesita tokens.
 
-```powershell
-python --version
+### Paso 1. Instalar los requisitos del sistema
+
+Se necesita:
+
+- Python 3.10 o posterior, con `venv` y `pip`.
+- Git accesible desde `PATH`.
+- Git LFS accesible desde `PATH` si se van a migrar objetos LFS.
+- Conectividad HTTPS hacia los dos GitLab.
+
+#### Windows
+
+1. Instala una versión compatible de Python desde
+   [python.org](https://www.python.org/downloads/windows/). Asegúrate de que el
+   comando `python` quede disponible en `PATH`.
+2. Instala Git desde [git-scm.com](https://git-scm.com/downloads/win). Si usas
+   `winget`, el instalador oficial documenta este comando:
+
+   ```powershell
+   winget install --id Git.Git -e --source winget
+   ```
+
+3. Cierra y vuelve a abrir la terminal para que reconozca los comandos nuevos.
+4. Comprueba las versiones desde PowerShell o CMD:
+
+   ```text
+   python --version
+   git --version
+   git lfs version
+   ```
+
+Si `git lfs version` no se reconoce, instala Git LFS desde
+[git-lfs.com](https://git-lfs.com/), abre una terminal nueva y repite la
+comprobación.
+
+Si `python` abre Microsoft Store o no se encuentra, revisa los alias de
+ejecución de aplicaciones de Windows o usa el lanzador `py -3` en los comandos
+de esta guía.
+
+#### Ubuntu o Debian
+
+Instala todos los requisitos desde los repositorios del sistema:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git git-lfs
+python3 --version
 git --version
 git lfs version
-python .\glim.py --help
 ```
 
-Instalación editable opcional:
+En otra distribución Linux, instala los paquetes equivalentes con su gestor de
+paquetes y usa `python3` en lugar de `python` cuando corresponda.
+
+### Paso 2. Descargar el código
+
+Elige una carpeta de trabajo y clona el repositorio. Si ya dispones de una copia
+local, entra directamente en su directorio y continúa en el paso 3.
+
+PowerShell o CMD:
+
+```text
+git clone https://github.com/DaniBall/GLIM.git
+cd GLIM
+```
+
+Linux con Bash:
+
+```bash
+git clone https://github.com/DaniBall/GLIM.git
+cd GLIM
+```
+
+Antes de seguir, `glim.py`, `pyproject.toml` y `README.md` deben estar en el
+directorio actual.
+
+### Paso 3. Crear y activar el entorno virtual
+
+El entorno se crea una sola vez. Hay que activarlo de nuevo cada vez que se abra
+una terminal para utilizar el comando corto `glim`.
+
+#### PowerShell
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install --editable .
-glim --help
+python -m pip --version
 ```
 
-Sin activar el entorno:
+Si PowerShell bloquea `Activate.ps1`, permite scripts únicamente en el proceso
+actual y repite la activación:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --editable .
-.\.venv\Scripts\python.exe .\glim.py --help
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
 ```
 
-### CMD
-
-```bat
-python --version
-git --version
-git lfs version
-python glim.py --help
-```
-
-Instalación editable opcional:
+#### CMD
 
 ```bat
 python -m venv .venv
 call .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
+python -m pip --version
+```
+
+#### Linux con Bash
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip --version
+```
+
+Cuando el entorno está activo, el prompt suele mostrar `(.venv)` y `python`
+apunta al intérprete aislado del proyecto.
+
+### Paso 4. Instalar GLIM
+
+Con el entorno virtual activo, actualiza las herramientas de empaquetado e
+instala el proyecto en modo editable:
+
+```text
+python -m pip install --upgrade pip setuptools
 python -m pip install --editable .
+```
+
+El modo editable registra el comando `glim`, pero mantiene como código fuente el
+`glim.py` de esta carpeta. Esto permite actualizar la herramienta desde Git sin
+crear copias manuales. La descarga de `setuptools` puede requerir acceso al
+índice de paquetes configurado por la organización.
+
+### Paso 5. Inicializar Git LFS
+
+Ejecuta una vez por cuenta de usuario:
+
+```text
+git lfs install
+```
+
+Después valida que el ejecutable está disponible:
+
+```text
+git lfs version
+```
+
+Si la migración no debe incluir LFS, se puede omitir su instalación, pero todos
+los comandos de dry-run y ejecución deberán llevar `--no-with-lfs`. Con LFS
+habilitado, el dry-run solo avisa si falta `git-lfs`; `--execute` aborta antes de
+modificar el destino.
+
+### Paso 6. Comprobar la instalación
+
+Con el entorno activo:
+
+```text
 glim --help
 ```
 
-Sin activar el entorno:
+También puedes comprobar que el comando apunta a este entorno:
+
+PowerShell:
+
+```powershell
+Get-Command glim
+python -m pip show glim
+```
+
+CMD:
 
 ```bat
-.venv\Scripts\python.exe -m pip install --editable .
-.venv\Scripts\python.exe glim.py --help
+where glim
+python -m pip show glim
 ```
 
-### Linux con Bash
-
-Instala Python 3.10+, Git y Git LFS con el gestor de paquetes de tu distribución:
+Linux con Bash:
 
 ```bash
-python3 --version
-git --version
-git lfs version
-python3 ./glim.py --help
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install --editable .
-glim --help
+command -v glim
+python -m pip show glim
 ```
 
-Sin activar el entorno:
+La salida debe mostrar la ayuda de la CLI y la versión `glim` instalada desde la
+ruta del repositorio. Si `glim` no se encuentra, confirma que el entorno está
+activo o usa la ruta directa indicada a continuación.
+
+### Usar GLIM sin activar el entorno
+
+PowerShell o CMD:
+
+```text
+.\.venv\Scripts\glim.exe --help
+```
+
+Linux con Bash:
 
 ```bash
-.venv/bin/python -m pip install --editable .
-.venv/bin/python ./glim.py --help
+./.venv/bin/glim --help
 ```
 
-### Ubuntu con Bash
+También es posible ejecutar el archivo sin instalar el comando:
 
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv git git-lfs
-git lfs install
-python3 --version
-git --version
-git lfs version
-python3 ./glim.py --help
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install --editable .
-glim --help
+- PowerShell: `python .\glim.py --help`
+- CMD: `python glim.py --help`
+- Linux: `python3 ./glim.py --help`
+
+### Actualizar o desinstalar
+
+Para actualizar una copia instalada en modo editable, entra en el repositorio,
+comprueba antes que no haya cambios locales y actualiza el código:
+
+```text
+git status --short
+git pull --ff-only
+python -m pip install --editable .
 ```
 
-Sin activar el entorno:
+Para retirar el comando del entorno virtual:
 
-```bash
-.venv/bin/python -m pip install --editable .
-.venv/bin/python ./glim.py --help
+```text
+python -m pip uninstall glim
 ```
 
-Si no se necesita LFS, añade `--no-with-lfs`. Con LFS habilitado, el dry-run avisa si falta `git-lfs`, pero `--execute` aborta antes de modificar el destino.
+Para salir del entorno sin desinstalarlo:
+
+```text
+deactivate
+```
+
+La instalación ya está completa. El siguiente paso es cargar los tokens de forma
+temporal como se explica en [Inicio seguro de una sesión](#inicio-seguro-de-una-sesión)
+y ejecutar primero un [dry-run](#dry-run).
 
 
 [Volver al índice](#índice)
@@ -365,7 +502,7 @@ El dry-run consulta ambas APIs y genera el plan sin modificar el destino. Requie
 ### PowerShell
 
 ```powershell
-python .\glim.py `
+glim `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -378,7 +515,7 @@ python .\glim.py `
 ### CMD
 
 ```bat
-python glim.py ^
+glim ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -391,7 +528,7 @@ python glim.py ^
 ### Linux con Bash
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -404,7 +541,7 @@ python3 ./glim.py \
 ### Ubuntu con Bash
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -424,7 +561,7 @@ Usa una ruta de checkpoint que no contenga evidencia de otra migración. Durante
 ### PowerShell
 
 ```powershell
-python .\glim.py `
+glim `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -437,7 +574,7 @@ python .\glim.py `
 ### CMD
 
 ```bat
-python glim.py ^
+glim ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -450,7 +587,7 @@ python glim.py ^
 ### Linux con Bash
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -463,7 +600,7 @@ python3 ./glim.py \
 ### Ubuntu con Bash
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -492,18 +629,37 @@ También puedes usar `--overwrite-ci-variables` si autorizas actualizar variable
 
 [Volver al índice](#índice)
 
+## Excluir variables CI/CD
+
+Añade `--no-ci-variables` cuando no deban consultarse ni copiarse variables
+CI/CD. La opción omite las variables de grupos, proyectos y pipeline schedules.
+Las schedules y sus inputs sí se migran y permanecen inactivos; únicamente se
+excluyen sus variables.
+
+`--no-ci-variables` no puede combinarse con `--overwrite-ci-variables`. Además,
+forma parte de la identidad del checkpoint: si una migración se inició con esta
+opción, hay que repetirla al usar `--resume`.
+
+Ejemplo de dry-run:
+
+```text
+glim --source-url "https://gitlab-origen.example.com" --target-url "https://gitlab.empresa.example" --source-group "empresa/brasil/aplicaciones" --target-group "migraciones/brasil/aplicaciones" --no-ci-variables
+```
+
+[Volver al índice](#índice)
+
 ## Informes, checkpoint y reanudación
 
-Cada ejecución escribe un informe JSON. Sin `--report`, crea `migration-report-<fecha>.json`. Los estados son `planned`, `ok`, `skipped`, `partial` y `failed`. Aunque no deberían contener tokens ni valores CI/CD, los informes son información operativa interna.
+Cada migración que supera la validación inicial de argumentos y tokens escribe un informe JSON. Los errores de uso de la CLI, incluidos los argumentos incompletos o la ausencia de tokens, terminan antes de crear ese informe. Sin `--report`, se crea `migration-report-<fecha>.json`. Los estados son `planned`, `ok`, `skipped`, `partial` y `failed`. Aunque no deberían contener tokens ni valores CI/CD, los informes son información operativa interna.
 
-El checkpoint predeterminado es `migration-checkpoint.json`. Registra identidad, proyectos y fases completadas, pero no secretos. Si ya existe y no se indica `--resume`, el script aborta. Para una migración nueva usa otra ruta; para continuar, usa el mismo archivo, URLs, grupos y opciones ligadas.
+El checkpoint predeterminado es `glim-checkpoint.json`. Registra identidad, proyectos y fases completadas, pero no secretos. Se recomienda indicar siempre una ruta dentro de `checkpoints/`, como en los ejemplos de esta guía, para mantener juntos los artefactos operativos. Si el checkpoint ya existe y no se indica `--resume`, el script aborta. Para una migración nueva usa otra ruta; para continuar, usa el mismo archivo, URLs, grupos y opciones ligadas.
 
 Las variables heredadas desde grupos superiores se inventarían, pero no se copian fuera del alcance; generan `partial` para exigir revisión.
 
 ### PowerShell
 
 ```powershell
-python .\glim.py `
+glim `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -517,7 +673,7 @@ python .\glim.py `
 ### CMD
 
 ```bat
-python glim.py ^
+glim ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -531,7 +687,7 @@ python glim.py ^
 ### Linux con Bash
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -545,7 +701,7 @@ python3 ./glim.py \
 ### Ubuntu con Bash
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -569,6 +725,7 @@ Si el checkpoint registra `existing_update`, repite `--existing update`. `--resu
 --no-with-lfs                No migra Git LFS.
 --no-with-wikis              No migra wikis.
 --existing {skip,update}     Tratamiento de proyectos existentes.
+--no-ci-variables            No consulta ni migra variables CI/CD.
 --overwrite-ci-variables     Actualiza variables CI/CD existentes.
 --resume                     Continúa desde el checkpoint.
 --checkpoint PATH            JSON durable de progreso.
@@ -577,19 +734,18 @@ Si el checkpoint registra `existing_update`, repite `--existing update`. `--resu
 --source-ca-bundle PATH      CA PEM solo para origen.
 --target-ca-bundle PATH      CA PEM solo para destino.
 --allow-http                 HTTP solo en laboratorios aislados.
---timeout 120                Timeout HTTP de API.
---git-timeout 3600           Timeout de cada operación Git/LFS.
---min-free-space-mb 4096     Espacio temporal mínimo.
---retries 5                  Reintentos temporales.
+--timeout 60                 Timeout HTTP de API.
+--git-timeout 1800           Timeout de cada operación Git/LFS.
+--min-free-space-mb 1024     Espacio temporal mínimo.
+--retries 3                  Reintentos temporales.
 --verbose                    Registro ampliado sin secretos.
 ```
 
 Comprueba siempre la versión local:
 
-- PowerShell: `python .\glim.py --help`
-- CMD: `python glim.py --help`
-- Linux/Bash: `python3 ./glim.py --help`
-- Ubuntu/Bash: `python3 ./glim.py --help`
+- PowerShell, CMD y Bash: `glim --help`
+- Sin instalar el comando: usa una de las alternativas descritas en
+  [Usar GLIM sin activar el entorno](#usar-glim-sin-activar-el-entorno).
 
 [Volver al índice](#índice)
 
@@ -602,7 +758,7 @@ Instalar la CA en los almacenes usados por el sistema, Python y Git es la opció
 CA común:
 
 ```powershell
-python .\glim.py `
+glim `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -613,7 +769,7 @@ python .\glim.py `
 CA separadas:
 
 ```powershell
-python .\glim.py `
+glim `
   --source-url "https://gitlab-origen.example.com" `
   --target-url "https://gitlab.empresa.example" `
   --source-group "empresa/brasil/aplicaciones" `
@@ -634,7 +790,7 @@ python -c "import urllib.request; print(urllib.request.urlopen('https://gitlab.e
 CA común:
 
 ```bat
-python glim.py ^
+glim ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -645,7 +801,7 @@ python glim.py ^
 CA separadas:
 
 ```bat
-python glim.py ^
+glim ^
   --source-url "https://gitlab-origen.example.com" ^
   --target-url "https://gitlab.empresa.example" ^
   --source-group "empresa/brasil/aplicaciones" ^
@@ -666,7 +822,7 @@ python -c "import urllib.request; print(urllib.request.urlopen('https://gitlab.e
 CA común:
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -677,7 +833,7 @@ python3 ./glim.py \
 CA separadas:
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -698,7 +854,7 @@ python3 -c "import urllib.request; print(urllib.request.urlopen('https://gitlab.
 CA común:
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -709,7 +865,7 @@ python3 ./glim.py \
 CA separadas:
 
 ```bash
-python3 ./glim.py \
+glim \
   --source-url "https://gitlab-origen.example.com" \
   --target-url "https://gitlab.empresa.example" \
   --source-group "empresa/brasil/aplicaciones" \
@@ -846,7 +1002,8 @@ Códigos de salida:
 
 - `0`: sin elementos `partial` ni `failed`.
 - `1`: fallo global o de preparación.
-- `2`: existe al menos un `partial` o `failed`.
+- `2`: existe al menos un `partial` o `failed`, o la CLI ha rechazado los
+  argumentos o los tokens obligatorios antes de iniciar la migración.
 - `130`: interrupción manual.
 
 

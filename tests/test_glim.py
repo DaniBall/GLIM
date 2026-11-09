@@ -302,3 +302,75 @@ class RunnerValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupDownloaderTests(unittest.TestCase):
+    def make(self, *extra):
+        args = migration.build_download_parser().parse_args(
+            ["--source-url", "https://gitlab.example.com", "--source-group", "a/b", *extra]
+        )
+        return migration.GroupDownloader(args, "secret-token")
+
+    def test_defaults(self):
+        downloader = self.make()
+        self.assertFalse(downloader.args.mirror)
+        self.assertEqual(downloader.args.existing, "skip")
+        self.assertTrue(downloader.args.include_subgroups)
+
+    def test_requires_https(self):
+        args = migration.build_download_parser().parse_args(
+            ["--source-url", "http://gitlab.example.com", "--source-group", "a"]
+        )
+        with self.assertRaises(migration.MigrationError):
+            migration.GroupDownloader(args, "t")
+
+    def test_local_path_keeps_hierarchy(self):
+        downloader = self.make("--output-dir", "out")
+        group = {"full_path": "a/b"}
+        path = downloader.local_path(group, {"path_with_namespace": "a/b/sub/repo"})
+        self.assertEqual(path, Path("out/sub/repo"))
+        mirror = self.make("--output-dir", "out", "--mirror")
+        self.assertEqual(
+            mirror.local_path(group, {"path_with_namespace": "a/b/repo"}),
+            Path("out/repo.git"),
+        )
+
+    def test_discover_filters_foreign_projects(self):
+        downloader = self.make()
+        downloader.api.paginate = Mock(
+            return_value=[
+                {"path_with_namespace": "a/b/repo"},
+                {"path_with_namespace": "a/bc/other"},
+            ]
+        )
+        projects = downloader.discover_projects({"id": 1, "full_path": "a/b"})
+        self.assertEqual([p["path_with_namespace"] for p in projects], ["a/b/repo"])
+
+    def test_run_clones_and_reports_failures(self):
+        downloader = self.make("--no-with-lfs")
+        downloader.api.get_group = Mock(return_value={"id": 1, "full_path": "a/b"})
+        downloader.api.paginate = Mock(
+            return_value=[
+                {"path_with_namespace": "a/b/ok", "http_url_to_repo": "https://x/ok.git"},
+                {"path_with_namespace": "a/b/ko", "http_url_to_repo": "https://x/ko.git"},
+            ]
+        )
+
+        def fake_git(command, cwd=None):
+            if command[-2].endswith("ko.git"):
+                raise migration.MigrationError("boom")
+
+        downloader.run_git = Mock(side_effect=fake_git)
+        with patch.object(Path, "exists", return_value=False), patch.object(
+            Path, "mkdir"
+        ):
+            results = downloader.run()
+        self.assertEqual(results["cloned"], ["a/b/ok"])
+        self.assertEqual(results["failed"], ["a/b/ko"])
+
+    def test_git_env_scopes_token_to_host(self):
+        env = self.make().git_env()
+        self.assertEqual(
+            env["GIT_CONFIG_KEY_0"], "http.https://gitlab.example.com/.extraHeader"
+        )
+        self.assertNotIn("secret-token", env["GIT_CONFIG_VALUE_0"])

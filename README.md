@@ -8,6 +8,7 @@ El script trabaja en **modo simulación por defecto**. Solo modifica el destino 
 ## Índice
 
 - [Alcance](#alcance)
+- [Descargar todos los repos de un grupo](#descargar-todos-los-repos-de-un-grupo)
 - [Requisitos y permisos](#requisitos-y-permisos)
 - [Instalación y comprobación](#instalación-y-comprobación)
 - [Inicio seguro de una sesión](#inicio-seguro-de-una-sesión)
@@ -53,6 +54,26 @@ El script trabaja en **modo simulación por defecto**. Solo modifica el destino 
 - Asociación visual de autores cuando sus correos no coinciden con cuentas verificadas del destino.
 
 Los merge commits sí se conservan como objetos Git; las merge requests no se reconstruyen como entidades. Las identidades o reglas que no puedan mapearse de forma inequívoca no se fuerzan: el resultado queda `partial` y el informe indica la intervención necesaria.
+
+
+[Volver al índice](#índice)
+
+## Descargar todos los repos de un grupo
+
+El subcomando `download` clona en local todos los repositorios de un grupo (y, por defecto, de sus subgrupos), conservando la jerarquía de carpetas. Solo lee de GitLab; nunca lo modifica. Usa el token de `GITLAB_SOURCE_TOKEN` (`read_api` y `read_repository`).
+
+```bash
+python glim.py download --source-url https://gitlab.example.com --source-group equipo/proyectos --output-dir ./backup
+```
+
+Opciones principales:
+
+- `--dry-run`: solo lista los repositorios y su ruta local.
+- `--mirror`: clona como repositorio bare con todas las referencias (`repo.git`).
+- `--existing update`: si el directorio ya existe, hace `fetch` en vez de omitirlo.
+- `--no-include-subgroups`, `--include-archived`, `--no-with-lfs`, `--ca-bundle`, `--allow-http`.
+
+Devuelve 0 si todo fue bien, 1 ante un error global y 2 si algún repositorio falló.
 
 
 [Volver al índice](#índice)

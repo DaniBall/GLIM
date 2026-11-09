@@ -16,6 +16,9 @@ por cabeceras y se redactan de errores e informes.
 
 No migra el historial de pipelines, jobs, trazas, artefactos, runners, triggers,
 Container Registry, paquetes ni secretos que la API origen no pueda devolver.
+
+El subcomando ``glim download`` clona en local todos los repositorios de un grupo
+(y sus subgrupos), con todas sus ramas, etiquetas y, opcionalmente, objetos LFS.
 """
 
 from __future__ import annotations

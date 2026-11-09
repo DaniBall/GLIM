@@ -16,6 +16,9 @@ por cabeceras y se redactan de errores e informes.
 
 No migra el historial de pipelines, jobs, trazas, artefactos, runners, triggers,
 Container Registry, paquetes ni secretos que la API origen no pueda devolver.
+
+El subcomando ``glim download`` clona en local todos los repositorios de un grupo
+(y sus subgrupos), con todas sus ramas, etiquetas y, opcionalmente, objetos LFS.
 """
 
 from __future__ import annotations
@@ -320,6 +323,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Migra repositorios y configuración operativa de CI/CD entre dos "
             "grupos de GitLab. Simula por defecto."
+        ),
+        epilog=(
+            "Para descargar en local todos los repositorios de un grupo usa: "
+            "glim download --help"
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -2712,11 +2719,265 @@ def configure_logging(verbose: bool) -> None:
     )
 
 
+DOWNLOAD_TOKEN_ENV = SOURCE_TOKEN_ENV
+
+
+def build_download_parser() -> argparse.ArgumentParser:
+    """Construye la CLI del subcomando ``download``.
+
+    Solo lee del GitLab indicado; nunca modifica la instancia."""
+    parser = argparse.ArgumentParser(
+        prog="glim download",
+        description=(
+            "Descarga (clona) todos los repositorios de un grupo de GitLab "
+            "conservando la jerarquía de subgrupos. El token se lee de "
+            f"{DOWNLOAD_TOKEN_ENV}."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--source-url", required=True, help="URL del GitLab")
+    parser.add_argument(
+        "--source-group", required=True, help="Ruta completa del grupo a descargar"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("."),
+        help="Directorio local donde se crearán los repositorios",
+    )
+    parser.add_argument(
+        "--include-subgroups",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Incluye proyectos de subgrupos",
+    )
+    parser.add_argument(
+        "--include-archived", action="store_true", help="Incluye proyectos archivados"
+    )
+    parser.add_argument(
+        "--mirror",
+        action="store_true",
+        help="Clona con --mirror (repositorio bare con todas las referencias)",
+    )
+    parser.add_argument(
+        "--with-lfs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Descarga objetos Git LFS cuando git-lfs esté instalado",
+    )
+    parser.add_argument(
+        "--existing",
+        choices=("skip", "update"),
+        default="skip",
+        help="Qué hacer si el directorio local ya existe: omitir o hacer fetch",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Solo lista los repos")
+    parser.add_argument(
+        "--allow-http", action="store_true", help="Permite HTTP sin TLS"
+    )
+    parser.add_argument("--ca-bundle", type=Path, help="CA PEM adicional")
+    parser.add_argument("--timeout", type=int, default=60, help="Timeout HTTP (s)")
+    parser.add_argument("--retries", type=int, default=3, help="Reintentos HTTP")
+    parser.add_argument(
+        "--git-timeout", type=int, default=1800, help="Timeout de cada operación Git (s)"
+    )
+    parser.add_argument("--verbose", action="store_true", help="Logs detallados")
+    return parser
+
+
+class GroupDownloader:
+    """Clona en local todos los repositorios de un grupo de GitLab."""
+
+    def __init__(self, args: argparse.Namespace, token: str) -> None:
+        self.args = args
+        self.token = token
+        self.base_url = clean_base_url(args.source_url)
+        if urlsplit(self.base_url).scheme != "https" and not args.allow_http:
+            raise MigrationError("La URL debe usar HTTPS; usa --allow-http para forzar")
+        ssl_context = ssl.create_default_context()
+        if args.ca_bundle:
+            ssl_context.load_verify_locations(cafile=str(args.ca_bundle.resolve()))
+        self.api = GitLabApi(
+            self.base_url,
+            token,
+            timeout=args.timeout,
+            retries=args.retries,
+            role="origen",
+            ssl_context=ssl_context,
+        )
+        self.lfs_ok = False
+
+    def git_env(self) -> dict[str, str]:
+        """Limita la cabecera de autenticación al host del GitLab indicado."""
+        env = os.environ.copy()
+        parsed = urlsplit(self.base_url)
+        scope = urlunsplit((parsed.scheme, parsed.netloc, "/", "", ""))
+        credentials = base64.b64encode(f"oauth2:{self.token}".encode()).decode("ascii")
+        entries = [(f"http.{scope}.extraHeader", f"Authorization: Basic {credentials}")]
+        if self.args.ca_bundle:
+            entries.append(
+                (f"http.{scope}.sslCAInfo", str(self.args.ca_bundle.resolve()))
+            )
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GIT_CONFIG_COUNT"] = str(len(entries))
+        for index, (key, value) in enumerate(entries):
+            env[f"GIT_CONFIG_KEY_{index}"] = key
+            env[f"GIT_CONFIG_VALUE_{index}"] = value
+        return env
+
+    def run_git(self, command: list[str], cwd: Path | None = None) -> None:
+        """Ejecuta Git y eleva un error con la salida redactada si falla."""
+        display = " ".join(command)
+        LOG.debug("Ejecutando: %s", display)
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=self.git_env(),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=self.args.git_timeout,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise MigrationError(
+                f"Timeout de {self.args.git_timeout}s ejecutando {display}"
+            ) from exc
+        if completed.returncode:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise MigrationError(
+                f"Falló {display}: {redact(detail[-4000:], [self.token])}"
+            )
+
+    def lfs_available(self) -> bool:
+        try:
+            return (
+                subprocess.run(
+                    ["git", "lfs", "version"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=30,
+                ).returncode
+                == 0
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    def discover_projects(self, group: dict[str, Any]) -> list[dict[str, Any]]:
+        """Lista los proyectos propios del grupo (y subgrupos), sin compartidos."""
+        projects = self.api.paginate(
+            f"/groups/{group['id']}/projects",
+            query={
+                "include_subgroups": self.args.include_subgroups,
+                "with_shared": False,
+                "archived": None if self.args.include_archived else False,
+                "order_by": "path",
+                "sort": "asc",
+            },
+        )
+        root = group["full_path"]
+        return [
+            project
+            for project in projects
+            if project["path_with_namespace"].startswith(f"{root}/")
+        ]
+
+    def local_path(self, group: dict[str, Any], project: dict[str, Any]) -> Path:
+        """Ruta local relativa al grupo raíz, sin permitir escapar del destino."""
+        relative = project["path_with_namespace"][len(group["full_path"]) + 1 :]
+        parts = [part for part in relative.split("/") if part]
+        if not parts or any(part in {".", ".."} for part in parts):
+            raise MigrationError(f"Ruta de proyecto no válida: {relative}")
+        target = self.args.output_dir.joinpath(*parts)
+        return target.with_name(target.name + ".git") if self.args.mirror else target
+
+    def download_project(self, project: dict[str, Any], destination: Path) -> str:
+        """Clona o actualiza un proyecto; devuelve el estado resultante."""
+        if destination.exists():
+            if self.args.existing == "skip":
+                return "skipped"
+            if self.args.mirror:
+                self.run_git(["git", "remote", "update", "--prune"], cwd=destination)
+            else:
+                self.run_git(["git", "fetch", "--all", "--tags", "--prune"], cwd=destination)
+            status = "updated"
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            command = ["git", "clone"]
+            if self.args.mirror:
+                command.append("--mirror")
+            command += [project["http_url_to_repo"], str(destination)]
+            self.run_git(command)
+            status = "cloned"
+        if self.args.with_lfs and self.lfs_ok and not project.get("empty_repo"):
+            self.run_git(["git", "lfs", "fetch", "--all"], cwd=destination)
+        return status
+
+    def run(self) -> dict[str, list[str]]:
+        group = self.api.get_group(self.args.source_group.strip("/"))
+        if not group:
+            raise MigrationError(f"No existe el grupo {self.args.source_group}")
+        self.lfs_ok = self.args.with_lfs and self.lfs_available()
+        if self.args.with_lfs and not self.lfs_ok:
+            LOG.warning("git-lfs no está disponible; se omiten objetos LFS")
+        projects = self.discover_projects(group)
+        LOG.info("Se encontraron %d proyectos en %s", len(projects), group["full_path"])
+        results: dict[str, list[str]] = {
+            "cloned": [], "updated": [], "skipped": [], "planned": [], "failed": []
+        }
+        for index, project in enumerate(projects, start=1):
+            name = project["path_with_namespace"]
+            destination = self.local_path(group, project)
+            if self.args.dry_run:
+                LOG.info("[%d/%d] %s -> %s", index, len(projects), name, destination)
+                results["planned"].append(name)
+                continue
+            LOG.info("[%d/%d] %s", index, len(projects), name)
+            try:
+                results[self.download_project(project, destination)].append(name)
+            except MigrationError as exc:
+                LOG.error("%s: %s", name, redact(str(exc), [self.token]))
+                results["failed"].append(name)
+        return results
+
+
+def download_main(argv: list[str]) -> int:
+    """Punto de entrada del subcomando ``download``.
+
+    Devuelve 0 si todo fue bien, 1 ante error global, 2 si algún repo falló."""
+    parser = build_download_parser()
+    args = parser.parse_args(argv)
+    configure_logging(args.verbose)
+    token = os.environ.get(DOWNLOAD_TOKEN_ENV)
+    if not token:
+        parser.error(f"Falta la variable de entorno obligatoria: {DOWNLOAD_TOKEN_ENV}")
+    try:
+        results = GroupDownloader(args, token).run()
+    except KeyboardInterrupt:
+        LOG.error("Descarga interrumpida por el usuario")
+        return 130
+    except (MigrationError, OSError, ssl.SSLError) as exc:
+        LOG.error("%s", redact(str(exc), [token]))
+        return 1
+    LOG.info(
+        "Finalizado: %s clonados, %s actualizados, %s omitidos, %s planificados, "
+        "%s fallidos",
+        *(len(results[key]) for key in ("cloned", "updated", "skipped", "planned", "failed")),
+    )
+    return 2 if results["failed"] else 0
+
+
 def main() -> int:
     """Valida argumentos y secretos, ejecuta la migración y escribe el informe.
 
     Devuelve 0 sin fallos, 1 ante error global, 2 con proyectos fallidos y 130 ante
     interrupción del usuario."""
+    if len(sys.argv) > 1 and sys.argv[1] == "download":
+        return download_main(sys.argv[2:])
     parser = build_parser()
     args = parser.parse_args()
     configure_logging(args.verbose)

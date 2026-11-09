@@ -8,6 +8,7 @@ El script trabaja en **modo simulación por defecto**. Solo modifica el destino 
 ## Índice
 
 - [Alcance](#alcance)
+- [Descargar todos los repos de un grupo](#descargar-todos-los-repos-de-un-grupo)
 - [Requisitos y permisos](#requisitos-y-permisos)
 - [Instalación y comprobación](#instalación-y-comprobación)
 - [Inicio seguro de una sesión](#inicio-seguro-de-una-sesión)
@@ -53,6 +54,93 @@ El script trabaja en **modo simulación por defecto**. Solo modifica el destino 
 - Asociación visual de autores cuando sus correos no coinciden con cuentas verificadas del destino.
 
 Los merge commits sí se conservan como objetos Git; las merge requests no se reconstruyen como entidades. Las identidades o reglas que no puedan mapearse de forma inequívoca no se fuerzan: el resultado queda `partial` y el informe indica la intervención necesaria.
+
+
+[Volver al índice](#índice)
+
+## Descargar todos los repos de un grupo
+
+El subcomando `download` clona en local todos los repositorios de un grupo (y, por defecto, de sus subgrupos), conservando la jerarquía de carpetas. Solo lee de GitLab; nunca lo modifica.
+
+### Requisitos
+
+- Python 3.10 o posterior y Git en `PATH`.
+- Git LFS en `PATH` si algún repositorio usa LFS (ver más abajo).
+- Variable `GITLAB_SOURCE_TOKEN` con un token con `read_api` y `read_repository`. No hace falta `GITLAB_TARGET_TOKEN`.
+
+### Uso rápido
+
+Define el token sin dejarlo en el historial de la shell:
+
+```bash
+read -rsp "Token GitLab: " GITLAB_SOURCE_TOKEN && export GITLAB_SOURCE_TOKEN
+```
+
+Revisa primero qué se descargaría:
+
+```bash
+python glim.py download --source-url https://gitlab.example.com --source-group equipo/proyectos --output-dir ./backup --dry-run
+```
+
+Descarga:
+
+```bash
+python glim.py download --source-url https://gitlab.example.com --source-group equipo/proyectos --output-dir ./backup
+```
+
+Si está instalado con `pip install .`, también vale `glim download ...`.
+
+El proyecto `equipo/proyectos/sub/repo` se guarda en `./backup/sub/repo`.
+
+### Ramas y etiquetas
+
+Siempre se descarga el historial completo de todas las ramas y etiquetas. Lo que cambia es cómo quedan en local:
+
+| Modo | Resultado |
+| --- | --- |
+| Por defecto (`git clone`) | Carpeta de trabajo con la rama por defecto. Las demás quedan como ramas remotas (`origin/develop`…), visibles con `git branch -a` y utilizables sin conexión con `git switch <rama>`. |
+| `--mirror` | Repositorio bare (`repo.git`) sin archivos a la vista, con todas las ramas, etiquetas y referencias idénticas al origen. Recomendado para copias de seguridad. |
+
+### Git LFS
+
+Git LFS guarda los archivos grandes (binarios, imágenes, vídeos…) fuera del historial Git: el repositorio solo contiene un puntero y el contenido real está en el servidor LFS de GitLab. Un repositorio lo usa si su `.gitattributes` contiene `filter=lfs`.
+
+- Si `git-lfs` está instalado, `download` ejecuta además `git lfs fetch --all` para bajar los objetos LFS de todas las ramas.
+- Si no está instalado, muestra un aviso y continúa; esos archivos quedarán como punteros de texto.
+- Instalación: `apt install git-lfs` o `brew install git-lfs`, y después `git lfs install` una vez.
+- `--no-with-lfs` lo desactiva.
+
+### Volver a ejecutar
+
+Por defecto, los repositorios cuya carpeta ya existe se omiten. Con `--existing update` se actualizan: en modo normal con `git fetch --all --tags --prune` (actualiza las ramas remotas sin tocar la rama en la que estés) y con `--mirror` con `git remote update --prune`. Las ramas borradas en origen se eliminan en local.
+
+### Opciones
+
+| Opción | Descripción |
+| --- | --- |
+| `--source-url` | URL del GitLab (obligatoria). |
+| `--source-group` | Ruta completa del grupo (obligatoria). |
+| `--output-dir` | Directorio destino; por defecto el actual. |
+| `--dry-run` | Solo lista repositorios y rutas locales. |
+| `--mirror` | Clona como repositorio bare con todas las referencias. |
+| `--existing {skip,update}` | Omite o actualiza los repositorios ya descargados. |
+| `--no-include-subgroups` | Solo los proyectos directos del grupo. |
+| `--include-archived` | Incluye proyectos archivados. |
+| `--no-with-lfs` | No descarga objetos Git LFS. |
+| `--ca-bundle` | CA PEM adicional para API y Git. |
+| `--allow-http` | Permite HTTP sin TLS (desaconsejado). |
+| `--timeout`, `--retries` | Timeout y reintentos HTTP. |
+| `--git-timeout` | Timeout de cada operación Git, en segundos. |
+| `--verbose` | Logs detallados sin revelar secretos. |
+
+### Qué no descarga
+
+- Wikis, issues, merge requests, pipelines, artefactos, paquetes ni Container Registry.
+- Proyectos compartidos con el grupo pero que pertenecen a otro namespace.
+
+### Resultado
+
+Un fallo en un repositorio no detiene el resto; se registra en el log y el resumen final indica clonados, actualizados, omitidos y fallidos. Código de salida: 0 si todo fue bien, 1 ante un error global (token, grupo inexistente, conexión), 2 si algún repositorio falló y 130 si se interrumpe.
 
 
 [Volver al índice](#índice)
@@ -1026,7 +1114,7 @@ Códigos de salida:
 
 ```text
 .
-|-- glim.py   # Implementación y CLI
+|-- glim.py                    # Implementación y CLI (migración y download)
 |-- tests/                     # Pruebas unitarias
 |-- .github/workflows/         # GitHub Actions
 |-- pyproject.toml             # Metadatos y comando instalable
